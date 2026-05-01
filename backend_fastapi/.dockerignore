@@ -1,0 +1,17 @@
+.venv
+__pycache__
+*.py[cod]
+*.egg-info
+.pytest_cache
+.mypy_cache
+.ruff_cache
+.env
+.env.local
+.env.*.local
+# Never bake service account keys into images; mount at runtime (docker-compose.yml api.volumes).
+secrets/
+logs
+.git
+.gitignore
+*.md
+.DS_Store

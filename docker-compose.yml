@@ -1,0 +1,98 @@
+# Full stack: Postgres + FastAPI + Next.js
+# Usage:
+#   cp backend_fastapi/.env.docker.example backend_fastapi/.env.docker
+#   # Edit .env.docker (SECRET_KEY, etc.). Place a Vertex SA JSON under backend_fastapi/secrets/
+#   # (default: cm-sales-ai-agent-sa.json) or set GCP_SERVICE_ACCOUNT_JSON in a project-root `.env`.
+#   docker compose up --build
+#
+# App: http://localhost:3000  |  API (direct): http://localhost:8000
+# Next rewrites /api/v1/* → api:8000 (set at web image build via BACKEND_PROXY_TARGET).
+# CORS: set ALLOWED_ORIGINS in backend_fastapi/.env (do not duplicate in api.environment — it would override env_file).
+#
+# Migrations: the `api` container runs `alembic upgrade head` on start (RUN_MIGRATIONS=true).
+# `web` waits for `api` to be healthy so Next’s proxy does not hit ECONNREFUSED during startup.
+# That applies every pending revision, including “data migrations” written inside Alembic scripts.
+# To run only migrations (no API): docker compose --profile migrate run --rm migrate
+# To skip auto-migrate on API startup: RUN_MIGRATIONS=false
+
+services:
+  # Debian bookworm (glibc): avoids musl/Alpine collation-version warnings and
+  # "invalid collation version change" on ALTER DATABASE ... REFRESH COLLATION VERSION.
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: myapp_dev
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d myapp_dev"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # api:
+  #   build:
+  #     context: ./backend_fastapi
+  #     dockerfile: Dockerfile
+  #   ports:
+  #     - "8000:8000"
+  #   environment:
+  #     DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/myapp_dev
+  #     RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
+  #     GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-sa.json
+  #   env_file:
+  #     - path: ./backend_fastapi/.env
+  #       required: false
+  #   volumes:
+  #     # Must be a host *file* path. If the path is missing, Docker creates an empty directory and you get:
+  #     # IsADirectoryError: Is a directory: '/run/secrets/gcp-sa.json' (Vertex/LangChain fails on chat).
+  #     - ${GCP_SERVICE_ACCOUNT_JSON:-./backend_fastapi/secrets/cm-sales-ai-agent-sa.json}:/run/secrets/gcp-sa.json:ro
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/ >/dev/null || exit 1"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5
+  #     start_period: 120s
+
+  # migrate:
+  #   profiles: ["migrate"]
+  #   build:
+  #     context: ./backend_fastapi
+  #     dockerfile: Dockerfile
+  #   environment:
+  #     DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/myapp_dev
+  #   env_file:
+  #     - path: ./backend_fastapi/.env
+  #       required: false
+  #   depends_on:
+  #     postgres:
+  #       condition: service_healthy
+  #   entrypoint: ["uv", "run", "alembic"]
+  #   command: ["upgrade", "head"]
+
+  # web:
+  #   build:
+  #     context: ./frontend_nextjs
+  #     dockerfile: Dockerfile
+  #     args:
+  #       BACKEND_PROXY_TARGET: http://api:8000
+  #   ports:
+  #     - "3000:3000"
+  #   environment:
+  #     NODE_ENV: production
+  #     # Runtime: `app/api/v1/[...path]/route.ts` proxies to FastAPI (body + Authorization).
+  #     BACKEND_PROXY_TARGET: http://api:8000
+  #   depends_on:
+  #     api:
+  #       condition: service_healthy
+
+volumes:
+  pgdata:

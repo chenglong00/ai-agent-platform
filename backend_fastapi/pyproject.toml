@@ -1,0 +1,32 @@
+[project]
+name = "backend-fastapi"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "alembic>=1.18.4",
+    "authlib>=1.6.8",
+    "fastapi[standard]>=0.129.0",
+    "greenlet>=3.1.0",
+    "itsdangerous>=2.2.0",
+    "httpx>=0.28.0",
+    "prometheus-fastapi-instrumentator>=7.0.0",
+    "psycopg[binary]>=3.3.2",
+    "pwdlib[argon2]>=0.3.0",
+    "pydantic-settings>=2.12.0",
+    "pyjwt[crypto]>=2.11.0",
+    "slowapi>=0.1.9",
+    "sqlmodel>=0.0.33",
+    "langchain>=1.2.13",
+    "langchain-google-genai>=3.0.0",
+    "google-cloud-aiplatform>=1.143.0",
+    "google-cloud-discoveryengine>=0.13.0",
+    "langchain-google-vertexai>=3.2.2",
+    "reportlab>=4.0.0",
+    "python-docx>=1.1.0",
+    "python-pptx>=1.0.0",
+    "deepagents>=0.5.3",
+    "tavily-python>=0.7.23",
+    "langchain-modal>=0.0.3",
+]
