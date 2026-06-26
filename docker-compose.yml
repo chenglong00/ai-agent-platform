@@ -21,9 +21,9 @@ services:
   postgres:
     image: postgres:16
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: myapp_dev
+      POSTGRES_USER: 
+      POSTGRES_PASSWORD: 
+      POSTGRES_DB: 
     ports:
       - "5432:5432"
     volumes:
@@ -42,16 +42,12 @@ services:
   #   ports:
   #     - "8000:8000"
   #   environment:
-  #     DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/myapp_dev
+  #     DATABASE_URL: 
   #     RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
-  #     GOOGLE_APPLICATION_CREDENTIALS: /run/secrets/gcp-sa.json
+  #     GOOGLE_APPLICATION_CREDENTIALS: 
   #   env_file:
   #     - path: ./backend_fastapi/.env
   #       required: false
-  #   volumes:
-  #     # Must be a host *file* path. If the path is missing, Docker creates an empty directory and you get:
-  #     # IsADirectoryError: Is a directory: '/run/secrets/gcp-sa.json' (Vertex/LangChain fails on chat).
-  #     - ${GCP_SERVICE_ACCOUNT_JSON:-./backend_fastapi/secrets/cm-sales-ai-agent-sa.json}:/run/secrets/gcp-sa.json:ro
   #   depends_on:
   #     postgres:
   #       condition: service_healthy
@@ -68,7 +64,7 @@ services:
   #     context: ./backend_fastapi
   #     dockerfile: Dockerfile
   #   environment:
-  #     DATABASE_URL: postgresql+psycopg://postgres:postgres@postgres:5432/myapp_dev
+  #     DATABASE_URL: 
   #   env_file:
   #     - path: ./backend_fastapi/.env
   #       required: false
