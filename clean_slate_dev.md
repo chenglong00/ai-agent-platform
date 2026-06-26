@@ -95,7 +95,7 @@ uv run uvicorn app.main:app --reload --host 0.0.0.0
 cd backend_fastapi
 uv run alembic init alembic
 # Go to alembic.ini, and change database URL 
-sqlalchemy.url = postgresql+psycopg://postgres:postgres@localhost:5432/myapp_dev
+sqlalchemy.url = 
 # go to alembic/env.py
 from app.core.config import settings
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
@@ -142,13 +142,6 @@ docker compose up --build -d
 docker compose up -d postgres
 
 
-
-# prod git pull
-sudo rm -rf cm-sales-ai-agent/
-
-sudo GIT_SSH_COMMAND='ssh -i /home/chenglong_wu/.ssh/id_deploy_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' \
-git clone git@github.com:CloudMile-Inc/cm-sales-ai-agent.git
-
 # 
 nano .env
 nano .env
@@ -170,8 +163,6 @@ sudo docker compose build web
 sudo docker compose build --no-cache web
 sudo docker compose up -d web
 
-
-git clone https://chenglongwu0510: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@github.com/CloudMile-Inc/cm-sales-ai-agent.git
 
 
 sudo git pull
