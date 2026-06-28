@@ -5,13 +5,25 @@ import { Loader2Icon, SendHorizonalIcon } from "lucide-react"
 import { flushSync } from "react-dom"
 
 import { BrowserLivePanel } from "@/components/ai/browser-live-panel"
-import { MessageResponse } from "@/components/ai/message"
+import { Message, MessageContent, MessageResponse } from "@/components/ai/message"
+import {
+  AssistantTurnContent,
+  parseMessageBlocks,
+} from "@/components/ai/message-blocks"
+import { SubagentProgress, SynthesisIndicator } from "@/components/ai/subagent-card"
+import { ToolCallProgress } from "@/components/ai/tool-call-card"
+import { TodoList } from "@/components/ai/todo-list"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { getToken } from "@/lib/auth"
 import {
   createChatConversation,
+  fetchChatMessages,
+  notifyChatConversationsUpdated,
   streamChatMessage,
+  workspaceConversationStorageKey,
+  type ChatMessageDto,
+  type MessageBlockDto,
   type SubagentInfo,
   type TodoItem,
   type ToolCallInfo,
@@ -28,6 +40,10 @@ const EXAMPLE_PROMPTS = [
 type WorkspaceChatPanelProps = {
   /** Called once per assistant turn after streaming finishes. */
   onTurnComplete?: () => void
+  /** Workspace root label from the API. */
+  workspaceRoot?: string | null
+  /** File currently open in the editor. */
+  selectedPath?: string | null
   className?: string
 }
 
@@ -35,10 +51,12 @@ type WorkspaceChatMessage = {
   id: string
   role: "user" | "assistant"
   text: string
+  content_format: "markdown" | "plain"
   pending?: boolean
   subagents?: SubagentInfo[]
   toolCalls?: ToolCallInfo[]
   todos?: TodoItem[]
+  blocks?: MessageBlockDto[]
   interrupted?: boolean
 }
 
@@ -53,22 +71,79 @@ function hasBrowserToolCalls(toolCalls?: ToolCallInfo[]): boolean {
   return !!toolCalls?.some(t => t.tool_name.startsWith("browser_"))
 }
 
+function rowToMessage(m: ChatMessageDto): WorkspaceChatMessage {
+  const parsed = parseMessageBlocks(m.blocks)
+  return {
+    id: m.id,
+    role: m.role,
+    text: m.text || parsed.text,
+    content_format:
+      m.content_format ??
+      parsed.content_format ??
+      (m.role === "assistant" ? "markdown" : "plain"),
+    blocks: m.blocks,
+    toolCalls: parsed.toolCalls.length ? parsed.toolCalls : undefined,
+    subagents: parsed.subagents.length ? parsed.subagents : undefined,
+    todos: parsed.todos.length ? parsed.todos : undefined,
+  }
+}
+
 export function WorkspaceChatPanel({
   onTurnComplete,
+  workspaceRoot,
+  selectedPath,
   className,
 }: WorkspaceChatPanelProps) {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<WorkspaceChatMessage[]>([])
+  const [sessionReady, setSessionReady] = useState(false)
   const [text, setText] = useState("")
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [authToken, setAuthToken] = useState("")
   const scrollRef = useRef<HTMLDivElement>(null)
 
-  // Auto-scroll on every render so streamed text stays pinned to the bottom.
   useEffect(() => {
     const el = scrollRef.current
     if (el) el.scrollTop = el.scrollHeight
   })
+
+  useEffect(() => {
+    let cancelled = false
+
+    async function bootstrap() {
+      const token = getToken()
+      if (!token) {
+        setSessionReady(true)
+        return
+      }
+      setAuthToken(token)
+
+      const storedId = localStorage.getItem(workspaceConversationStorageKey)
+      if (!storedId) {
+        setSessionReady(true)
+        return
+      }
+
+      try {
+        const rows = await fetchChatMessages(token, storedId)
+        if (cancelled) return
+        setConversationId(storedId)
+        setMessages(rows.map(rowToMessage))
+      } catch {
+        if (!cancelled) {
+          localStorage.removeItem(workspaceConversationStorageKey)
+        }
+      } finally {
+        if (!cancelled) setSessionReady(true)
+      }
+    }
+
+    void bootstrap()
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   const sendPrompt = useCallback(
     async (raw: string) => {
@@ -84,11 +159,13 @@ export function WorkspaceChatPanel({
       if (!conv) {
         try {
           const created = await createChatConversation(token, {
-            name: "Workspace session",
-            description: "Created from workspace page",
+            name: "Workspace",
+            description: "Agent session from workspace page",
           })
           conv = created.id
+          localStorage.setItem(workspaceConversationStorageKey, conv)
           setConversationId(conv)
+          notifyChatConversationsUpdated()
         } catch (e) {
           setError(e instanceof Error ? e.message : "Could not start conversation")
           return
@@ -102,8 +179,17 @@ export function WorkspaceChatPanel({
       setError(null)
       setMessages(prev => [
         ...prev,
-        { id: tempUser, role: "user", text: trimmed },
-        { id: tempAssistant, role: "assistant", text: "", pending: true, toolCalls: [] },
+        { id: tempUser, role: "user", text: trimmed, content_format: "plain" },
+        {
+          id: tempAssistant,
+          role: "assistant",
+          text: "",
+          content_format: "markdown",
+          pending: true,
+          toolCalls: [],
+          subagents: [],
+          todos: [],
+        },
       ])
 
       const subagentMap = new Map<string, SubagentInfo>()
@@ -126,7 +212,11 @@ export function WorkspaceChatPanel({
         )
 
       try {
-        for await (const event of streamChatMessage(token, conv, trimmed)) {
+        for await (const event of streamChatMessage(token, conv, trimmed, {
+          context: "workspace",
+          workspaceRoot: workspaceRoot ?? undefined,
+          workspaceSelectedPath: selectedPath ?? undefined,
+        })) {
           if (event.type === "token") {
             setMessages(prev =>
               prev.map(m =>
@@ -143,27 +233,27 @@ export function WorkspaceChatPanel({
               status: "running",
               content: "",
               started_at: event.started_at,
-              result: undefined,
-              completed_at: undefined,
             })
             flushSync(() => flushSubagents())
           } else if (event.type === "subagent_token") {
             const sa = subagentMap.get(event.id)
-            if (sa)
+            if (sa) {
               subagentMap.set(event.id, {
                 ...sa,
                 content: sa.content + event.content,
               })
+            }
             flushSubagents()
           } else if (event.type === "subagent_done") {
             const sa = subagentMap.get(event.id)
-            if (sa)
+            if (sa) {
               subagentMap.set(event.id, {
                 ...sa,
                 status: event.status,
                 result: event.result,
                 completed_at: event.completed_at,
               })
+            }
             flushSubagents()
           } else if (event.type === "tool_call_start") {
             toolCallMap.set(event.id, {
@@ -171,9 +261,7 @@ export function WorkspaceChatPanel({
               tool_name: event.tool_name,
               args: event.args,
               status: "running",
-              result: undefined,
               started_at: event.started_at,
-              completed_at: undefined,
             })
             flushSync(() => flushToolCalls())
           } else if (event.type === "tool_call_end") {
@@ -207,31 +295,43 @@ export function WorkspaceChatPanel({
             )
           } else if (event.type === "saved") {
             setMessages(prev =>
-              prev.map(m =>
-                m.id === tempAssistant
-                  ? {
-                      ...m,
-                      id: event.assistant_message_id,
-                      text: event.assistant_text,
-                      pending: false,
-                      interrupted: event.interrupted,
-                      toolCalls: Array.from(toolCallMap.values()),
-                    }
-                  : m,
-              ),
+              prev.map(m => {
+                if (m.id === tempUser) return m
+                if (m.id === tempAssistant) {
+                  return {
+                    ...m,
+                    id: event.assistant_message_id,
+                    text: event.assistant_text,
+                    blocks: event.assistant_blocks,
+                    pending: false,
+                    interrupted: event.interrupted,
+                    subagents: event.assistant_blocks
+                      ? undefined
+                      : Array.from(subagentMap.values()),
+                    toolCalls: event.assistant_blocks
+                      ? undefined
+                      : Array.from(toolCallMap.values()),
+                  }
+                }
+                return m
+              }),
             )
+            notifyChatConversationsUpdated()
           } else if (event.type === "error") {
             setError(event.message)
           }
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Stream failed")
+        setMessages(prev =>
+          prev.filter(m => m.id !== tempUser && m.id !== tempAssistant),
+        )
       } finally {
         setSending(false)
         onTurnComplete?.()
       }
     },
-    [conversationId, sending, onTurnComplete],
+    [conversationId, sending, onTurnComplete, workspaceRoot, selectedPath],
   )
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -243,22 +343,41 @@ export function WorkspaceChatPanel({
   const isEmpty = messages.length === 0
 
   return (
-    <div className={cn("flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground", className)}>
+    <div
+      className={cn(
+        "flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground",
+        className,
+      )}
+    >
       <div className="flex items-center justify-between border-b px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-        <span>Agent</span>
+        <span>Deep Agent</span>
+        {sending ? (
+          <span className="flex items-center gap-1 normal-case font-normal">
+            <Loader2Icon className="size-3 animate-spin" />
+            Working…
+          </span>
+        ) : null}
       </div>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
+        {!sessionReady ? (
+          <div className="flex items-center gap-2 text-xs text-muted-foreground">
+            <Loader2Icon className="size-3 animate-spin" />
+            Loading agent…
+          </div>
+        ) : null}
+
         {error ? (
           <div className="rounded border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive">
             {error}
           </div>
         ) : null}
 
-        {isEmpty ? (
+        {sessionReady && isEmpty ? (
           <div className="space-y-3">
             <p className="text-xs leading-relaxed text-muted-foreground">
-              Ask the agent to create or modify files in this workspace. Try one of these:
+              The deep agent shares your sandbox workspace. Ask it to create or
+              modify files — changes appear in the file tree after each turn.
             </p>
             <div className="space-y-1.5">
               {EXAMPLE_PROMPTS.map(prompt => (
@@ -276,73 +395,83 @@ export function WorkspaceChatPanel({
           </div>
         ) : null}
 
-        {messages.map(msg =>
-          msg.role === "user" ? (
-            <div key={msg.id} className="flex justify-end">
-              <div className="max-w-[85%] rounded-lg rounded-br-sm bg-primary px-3 py-2 text-xs leading-relaxed text-primary-foreground">
-                {msg.text}
+        {messages.map(msg => {
+          if (msg.role === "user") {
+            return (
+              <div key={msg.id} className="flex justify-end">
+                <div className="max-w-[85%] rounded-lg rounded-br-sm bg-primary px-3 py-2 text-xs leading-relaxed text-primary-foreground">
+                  {msg.text}
+                </div>
               </div>
-            </div>
-          ) : (
-            <div key={msg.id} className="space-y-1.5">
-              {msg.pending &&
-                hasBrowserToolCalls(msg.toolCalls) &&
-                getToken() && (
-                  <BrowserLivePanel accessToken={getToken()!} className="text-foreground" />
-                )}
-              {msg.toolCalls && msg.toolCalls.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {msg.toolCalls.map(tc => (
-                    <span
-                      key={tc.id}
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px]",
-                        tc.status === "complete"
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                          : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
-                      )}
-                    >
-                      {tc.status === "complete" ? "✓" : "⟳"} {tc.tool_name}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {msg.subagents && msg.subagents.length > 0 ? (
-                <div className="flex flex-wrap gap-1">
-                  {msg.subagents.map(sa => (
-                    <span
-                      key={sa.id}
-                      className={cn(
-                        "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px]",
-                        sa.status === "complete"
-                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
-                          : "bg-blue-500/10 text-blue-700 dark:text-blue-300",
-                      )}
-                    >
-                      {sa.status === "complete" ? "✓" : "⟳"} {sa.subagent_type}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {msg.text ? (
-                <div className="rounded border bg-background px-3 py-2 text-xs leading-relaxed text-foreground">
-                  <MessageResponse>{msg.text}</MessageResponse>
-                  {msg.interrupted ? (
-                    <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
-                      ⏸ Waiting for approval — reply <strong>yes</strong> or <strong>no</strong>.
-                    </p>
-                  ) : null}
-                </div>
-              ) : null}
-            </div>
-          ),
-        )}
+            )
+          }
 
-        {sending ? (
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <Loader2Icon className="size-3 animate-spin" /> Working…
-          </div>
-        ) : null}
+          const hasSubagents = !!msg.subagents?.length
+          const hasToolCalls = !!msg.toolCalls?.length
+          const hasTodos = !!msg.todos?.length
+          const allDone =
+            hasSubagents &&
+            msg.subagents!.every(
+              s => s.status === "complete" || s.status === "error",
+            )
+          const isActiveTurn = !!msg.pending && sending
+          const usePersistedBlocks = !msg.pending && !!msg.blocks?.length
+          const showThinking =
+            isActiveTurn && !msg.text && !hasSubagents && !hasToolCalls && !hasTodos
+
+          if (usePersistedBlocks) {
+            return (
+              <div key={msg.id}>
+                <AssistantTurnContent
+                  blocks={msg.blocks}
+                  interrupted={msg.interrupted}
+                />
+              </div>
+            )
+          }
+
+          return (
+            <div key={msg.id} className="space-y-1.5">
+              {showThinking && (
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2Icon className="size-3 animate-spin" />
+                  Thinking…
+                </div>
+              )}
+              {(hasTodos || (isActiveTurn && hasSubagents)) && (
+                <TodoList
+                  todos={msg.todos ?? []}
+                  isLoading={isActiveTurn && !hasTodos}
+                />
+              )}
+              {isActiveTurn && hasBrowserToolCalls(msg.toolCalls) && authToken && (
+                <BrowserLivePanel accessToken={authToken} className="text-foreground" />
+              )}
+              {hasToolCalls && <ToolCallProgress toolCalls={msg.toolCalls!} />}
+              {hasSubagents && <SubagentProgress subagents={msg.subagents!} />}
+              {hasSubagents && allDone && isActiveTurn && (
+                <SynthesisIndicator
+                  subagents={msg.subagents!}
+                  isStreaming
+                  className="mb-1"
+                />
+              )}
+              {msg.text ? (
+                <Message from="assistant">
+                  <MessageContent>
+                    <MessageResponse>{msg.text}</MessageResponse>
+                    {msg.interrupted ? (
+                      <p className="mt-2 text-[11px] text-amber-600 dark:text-amber-400">
+                        ⏸ Waiting for approval — reply <strong>yes</strong> or{" "}
+                        <strong>no</strong>.
+                      </p>
+                    ) : null}
+                  </MessageContent>
+                </Message>
+              ) : null}
+            </div>
+          )
+        })}
       </div>
 
       <form onSubmit={handleSubmit} className="border-t px-3 py-2">
@@ -351,7 +480,7 @@ export function WorkspaceChatPanel({
             value={text}
             onChange={e => setText(e.target.value)}
             placeholder="Ask the agent to modify files…"
-            disabled={sending}
+            disabled={sending || !sessionReady}
             rows={2}
             onKeyDown={e => {
               if (e.key === "Enter" && !e.shiftKey) {
@@ -365,7 +494,7 @@ export function WorkspaceChatPanel({
           <Button
             type="submit"
             size="icon"
-            disabled={sending || !text.trim()}
+            disabled={sending || !sessionReady || !text.trim()}
             aria-label="Send message"
           >
             {sending ? (

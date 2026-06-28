@@ -4,6 +4,10 @@ const chatBase = `${apiBaseUrl}/api/v1/chat`;
 
 export const chatConversationStorageKey = "ai_platform_chat_conversation_id";
 
+/** Persisted workspace panel conversation (separate from main chat). */
+export const workspaceConversationStorageKey =
+  "ai_platform_workspace_conversation_id";
+
 /** Fired when the sidebar should refetch the conversation list (same tab). */
 export const CHAT_CONVERSATIONS_UPDATED_EVENT =
   "ai_platform_chat_conversations_updated";
@@ -222,17 +226,29 @@ export type StreamEvent =
   | { type: "saved"; assistant_message_id: string; assistant_text: string; assistant_blocks?: MessageBlockDto[]; interrupted: boolean }
   | { type: "error"; message: string };
 
+export type StreamChatOptions = {
+  context?: "chat" | "workspace";
+  workspaceSelectedPath?: string | null;
+  workspaceRoot?: string | null;
+};
+
 export async function* streamChatMessage(
   accessToken: string,
   conversationId: string,
   text: string,
+  options: StreamChatOptions = {},
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(
     `${chatBase}/conversations/${encodeURIComponent(conversationId)}/messages/stream`,
     {
       method: "POST",
       headers: authHeaders(accessToken),
-      body: JSON.stringify({ text: text.trim() }),
+      body: JSON.stringify({
+        text: text.trim(),
+        context: options.context,
+        workspace_selected_path: options.workspaceSelectedPath ?? undefined,
+        workspace_root: options.workspaceRoot ?? undefined,
+      }),
       cache: "no-store",
     },
   );

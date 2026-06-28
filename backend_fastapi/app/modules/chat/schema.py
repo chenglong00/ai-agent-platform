@@ -1,7 +1,7 @@
 """Chat API request/response schemas."""
 
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any, Literal, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -60,6 +60,9 @@ class MessageResponse(BaseModel):
 class SendMessageRequest(BaseModel):
     text: str = Field(..., min_length=1)
     agent_type: AgentType | None = None
+    context: Literal["chat", "workspace"] | None = None
+    workspace_selected_path: str | None = Field(default=None, max_length=512)
+    workspace_root: str | None = Field(default=None, max_length=512)
 
 
 class PendingToolCall(BaseModel):

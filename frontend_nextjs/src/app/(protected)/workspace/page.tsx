@@ -284,7 +284,11 @@ export default function WorkspacePage() {
             maxSize={50}
             className="flex min-h-0 flex-col"
           >
-            <WorkspaceChatPanel onTurnComplete={onTurnComplete} />
+            <WorkspaceChatPanel
+              onTurnComplete={onTurnComplete}
+              workspaceRoot={workspaceRoot}
+              selectedPath={selectedPath}
+            />
           </ResizablePanel>
         </ResizablePanelGroup>
       </SidebarInset>

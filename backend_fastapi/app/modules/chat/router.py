@@ -53,6 +53,32 @@ def _message_response(message) -> MessageResponse:
     )
 
 
+def _agent_input_text(
+    body: SendMessageRequest,
+    conversation_history: list[tuple[str, str]],
+) -> str:
+    """Augment user text for the deep agent (stored message stays as typed)."""
+    text = body.text.strip()
+    if body.context != "workspace":
+        return text
+
+    parts: list[str] = []
+    if not conversation_history:
+        parts.append(
+            "[Workspace mode] The user is on the Workspace page. "
+            "Use sandbox filesystem and shell tools to create, read, and modify files "
+            "in their per-user workspace. After changing files, summarize what you did."
+        )
+    if body.workspace_root and body.workspace_root.strip():
+        parts.append(f"Workspace root: `{body.workspace_root.strip()}`")
+    if body.workspace_selected_path and body.workspace_selected_path.strip():
+        parts.append(
+            f"Currently open in the editor: `{body.workspace_selected_path.strip()}`"
+        )
+    parts.append(text)
+    return "\n\n".join(parts)
+
+
 def _block_specs_from_done(chunk: dict) -> list[tuple[BlockType, dict]] | None:
     raw_specs = chunk.get("block_specs")
     if not raw_specs:
@@ -171,11 +197,12 @@ async def send_message(
         text=body.text,
     )
     kb_ctx = await build_user_access_context(session, current_user)
+    agent_text = _agent_input_text(body, conversation_history)
 
     try:
         assistant_text, pending_tool_calls = await agent_service.reply(
             body.agent_type,
-            body.text,
+            agent_text,
             user_id=current_user.id,
             conversation_id=conversation_id,
             conversation_history=conversation_history,
@@ -236,6 +263,7 @@ async def stream_message(
         text=body.text,
     )
     kb_ctx = await build_user_access_context(session, current_user)
+    agent_text = _agent_input_text(body, conversation_history)
 
     async def generate():
         yield _sse({"type": "start", "user_message_id": str(user_msg.id)})
@@ -246,7 +274,7 @@ async def stream_message(
         try:
             async for chunk in agent_service.stream_reply(
                 body.agent_type,
-                body.text,
+                agent_text,
                 user_id=current_user.id,
                 conversation_id=conversation_id,
                 conversation_history=conversation_history,
