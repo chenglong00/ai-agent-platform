@@ -30,6 +30,7 @@ class _UserSandboxEntry:
 _cleanup_task: asyncio.Task[None] | None = None
 _pool: dict[str, _UserSandboxEntry] = {}
 _pool_lock = threading.Lock()
+_user_create_locks: dict[str, threading.Lock] = {}
 
 
 def _backend_name() -> str:
@@ -128,17 +129,24 @@ def get_user_backend(user_id: str) -> BackendProtocol:
         if entry is not None:
             entry.last_used_at = time.monotonic()
             return entry.backend
+        lock = _user_create_locks.setdefault(key, threading.Lock())
 
-    created = _create_backend_for_user(key)
-    with _pool_lock:
-        existing = _pool.get(key)
-        if existing is not None:
-            if created.raw_sandbox is not None:
-                _destroy_raw_sandbox(created.raw_sandbox)
-            existing.last_used_at = time.monotonic()
-            return existing.backend
-        _pool[key] = created
-        return created.backend
+    with lock:
+        with _pool_lock:
+            entry = _pool.get(key)
+            if entry is not None:
+                entry.last_used_at = time.monotonic()
+                return entry.backend
+        created = _create_backend_for_user(key)
+        with _pool_lock:
+            existing = _pool.get(key)
+            if existing is not None:
+                if created.raw_sandbox is not None:
+                    _destroy_raw_sandbox(created.raw_sandbox)
+                existing.last_used_at = time.monotonic()
+                return existing.backend
+            _pool[key] = created
+            return created.backend
 
 
 def release_user_sandbox(user_id: str) -> None:

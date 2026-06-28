@@ -39,6 +39,7 @@ export default function WorkspacePage() {
   const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const initialSnapshotTaken = useRef(false)
+  const refreshInFlight = useRef<Promise<void> | null>(null)
 
   const tree: WorkspaceTreeNode[] = useMemo(
     () => buildWorkspaceTree(entries),
@@ -64,45 +65,43 @@ export default function WorkspacePage() {
     async (
       opts: { selectFirstFile?: boolean; resetSnapshot?: boolean } = {},
     ) => {
+      if (refreshInFlight.current) {
+        return refreshInFlight.current
+      }
+      const run = (async () => {
       const token = getToken()
       if (!token) return
       setTreeLoading(true)
       setError(null)
       try {
-        const [result, rootInfo] = await Promise.all([
-          fetchWorkspaceTree(token),
-          fetchWorkspaceRoot(token),
-        ])
+        const rootInfo = await fetchWorkspaceRoot(token)
         setWorkspaceRoot(rootInfo.root)
+        const result = await fetchWorkspaceTree(token)
         setEntries(result.entries)
 
-        // Fetch contents for all files (skip dirs, skip large files signaled by size)
-        const fileEntries = result.entries.filter(e => e.type === "file")
-        const next = new Map<string, string>()
-        await Promise.all(
-          fileEntries.map(async entry => {
-            try {
-              const file = await fetchWorkspaceFile(token, entry.path)
-              if (!file.binary) next.set(entry.path, file.content)
-            } catch {
-              /* skip files we can't read */
-            }
-          }),
-        )
-        setFiles(next)
         if (opts.resetSnapshot || !initialSnapshotTaken.current) {
-          setOriginals(new Map(next))
+          setOriginals(new Map())
+          setFiles(new Map())
           initialSnapshotTaken.current = true
         }
 
         if (opts.selectFirstFile && !selectedPath) {
-          const first = fileEntries[0]
+          const first = result.entries.find(e => e.type === "file")
           if (first) setSelectedPath(first.path)
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : "Could not load workspace")
       } finally {
         setTreeLoading(false)
+      }
+      })()
+      refreshInFlight.current = run
+      try {
+        await run
+      } finally {
+        if (refreshInFlight.current === run) {
+          refreshInFlight.current = null
+        }
       }
     },
     [selectedPath],
@@ -113,8 +112,38 @@ export default function WorkspacePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Reload selected file specifically (after a chat turn) so the editor is
-  // immediately fresh even before the broader tree refresh completes.
+  useEffect(() => {
+    if (!selectedPath) return
+    const token = getToken()
+    if (!token) return
+    let cancelled = false
+    setSelectedLoading(true)
+    void fetchWorkspaceFile(token, selectedPath)
+      .then(file => {
+        if (cancelled || file.binary) return
+        setFiles(prev => {
+          const next = new Map(prev)
+          next.set(file.path, file.content)
+          return next
+        })
+        setOriginals(prev => {
+          if (prev.has(file.path)) return prev
+          const next = new Map(prev)
+          next.set(file.path, file.content)
+          return next
+        })
+      })
+      .catch(() => {
+        /* ignore — error banner handled on tree refresh */
+      })
+      .finally(() => {
+        if (!cancelled) setSelectedLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [selectedPath])
+
   const reloadSelectedFile = useCallback(async () => {
     const token = getToken()
     if (!token || !selectedPath) return

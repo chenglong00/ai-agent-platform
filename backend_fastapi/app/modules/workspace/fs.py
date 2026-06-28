@@ -3,12 +3,11 @@
 from __future__ import annotations
 
 import base64
+import json
 import logging
 from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
 
-from deepagents.backends import LocalShellBackend
 from deepagents.backends.protocol import BackendProtocol
 
 from app.ai.chat_agent.backend_factory import get_user_backend
@@ -62,17 +61,6 @@ class WorkspaceFsError(Exception):
         self.code = code
 
 
-def _parse_mtime(raw: object) -> float | None:
-    if raw is None:
-        return None
-    if isinstance(raw, (int, float)):
-        return float(raw)
-    try:
-        return datetime.fromisoformat(str(raw)).timestamp()
-    except ValueError:
-        return None
-
-
 def _normalize_rel_path(path: str) -> str:
     cleaned = (path or "").strip().replace("\\", "/").lstrip("/")
     if cleaned in {"", "."}:
@@ -82,23 +70,38 @@ def _normalize_rel_path(path: str) -> str:
     return cleaned
 
 
-def _backend_rel_path(rel_path: str) -> str:
-    rel = _normalize_rel_path(rel_path)
-    return f"/{rel}" if rel else "/"
-
-
 def _entry_name(path: str) -> str:
     return path.rstrip("/").split("/")[-1]
 
 
+def _is_local_backend() -> bool:
+    return settings.DEEP_AGENT_BACKEND.strip().lower() == "local"
+
+
 def _local_root_for_user(user_id: str) -> Path | None:
-    backend = get_user_backend(user_id)
-    if not isinstance(backend, LocalShellBackend):
+    if not _is_local_backend():
         return None
-    root_dir = getattr(backend, "root_dir", None) or getattr(backend, "cwd", None)
-    if not root_dir:
-        return None
-    return Path(str(root_dir)).resolve()
+    root = settings.DEEP_AGENT_SANDBOX_LOCAL_ROOT / user_id
+    root.mkdir(parents=True, exist_ok=True)
+    return root.resolve()
+
+
+def _sandbox_abs_path(rel_path: str) -> str:
+    workdir = settings.DEEP_AGENT_SANDBOX_WORKDIR.rstrip("/") or "/workspace"
+    rel = _normalize_rel_path(rel_path)
+    if not rel:
+        return workdir
+    return f"{workdir}/{rel}"
+
+
+def _open_user_backend(user_id: str) -> BackendProtocol:
+    try:
+        return get_user_backend(user_id)
+    except Exception as exc:
+        raise WorkspaceFsError(
+            "read_failed",
+            f"Could not open agent sandbox ({settings.DEEP_AGENT_BACKEND}): {exc}",
+        ) from exc
 
 
 def _walk_local_root(root: Path, start: Path) -> list[FsEntry]:
@@ -148,40 +151,83 @@ def _walk_local_root(root: Path, start: Path) -> list[FsEntry]:
     return entries
 
 
-def _entries_from_backend_glob(
+def _entries_from_sandbox_execute(
     backend: BackendProtocol,
     rel_path: str,
 ) -> list[FsEntry]:
-    pattern = "**/*" if not rel_path else f"{rel_path.rstrip('/')}/**/*"
-    result = backend.glob(pattern)
-    if result.error:
-        if "not found" in result.error.lower():
-            raise WorkspaceFsError("not_found", result.error)
-        raise WorkspaceFsError("read_failed", result.error)
-
-    by_path: dict[str, FsEntry] = {}
-    for item in result.matches or []:
-        if len(by_path) >= _MAX_ENTRIES:
-            logger.warning("workspace_tree_truncated max=%s", _MAX_ENTRIES)
+    """List files via sandbox shell — Daytona/Modal glob+ls can hang indefinitely."""
+    start = _sandbox_abs_path(rel_path)
+    skip = sorted(_SKIP_DIRS)
+    script = f"""python3 -c "
+import json, os, sys
+SKIP = set({skip!r})
+ROOT = {start!r}
+MAX = {_MAX_ENTRIES}
+if not os.path.isdir(ROOT):
+    print(json.dumps({{'entries': [], 'truncated': False}}))
+    sys.exit(0)
+entries = []
+truncated = False
+for dirpath, dirnames, filenames in os.walk(ROOT, followlinks=False):
+    dirnames[:] = sorted([d for d in dirnames if d not in SKIP], key=str.lower)
+    rel_dir = os.path.relpath(dirpath, ROOT)
+    if rel_dir != '.':
+        if len(entries) >= MAX:
+            truncated = True
             break
-        raw_path = str(item.get("path", "")).replace("\\", "/").lstrip("/")
-        if not raw_path or raw_path.split("/")[0] in _SKIP_DIRS:
+        try:
+            st = os.stat(dirpath)
+            entries.append({{'path': rel_dir, 'type': 'directory', 'size': 0, 'mtime': st.st_mtime}})
+        except OSError:
+            pass
+    for f in sorted(filenames, key=str.lower):
+        if len(entries) >= MAX:
+            truncated = True
+            break
+        full = os.path.join(dirpath, f)
+        try:
+            st = os.stat(full)
+        except OSError:
             continue
-        parts = raw_path.split("/")
-        for idx in range(len(parts)):
-            subpath = "/".join(parts[: idx + 1])
-            if subpath in by_path:
-                continue
-            is_dir = idx < len(parts) - 1 or bool(item.get("is_dir"))
-            by_path[subpath] = FsEntry(
-                name=_entry_name(subpath),
-                path=subpath,
-                type="directory" if is_dir else "file",
-                size=0 if is_dir else int(item.get("size", 0) or 0),
-                modified_at=_parse_mtime(item.get("modified_at")),
-            )
+        rel = os.path.relpath(full, ROOT)
+        entries.append({{'path': rel, 'type': 'file', 'size': st.st_size, 'mtime': st.st_mtime}})
+    if truncated:
+        break
+print(json.dumps({{'entries': entries, 'truncated': truncated}}))
+" 2>/dev/null
+"""
+    result = backend.execute(script)
+    out = (result.output or "").strip()
+    if not out:
+        raise WorkspaceFsError("read_failed", "Empty response listing sandbox workspace")
+    try:
+        data = json.loads(out.split("\n")[-1])
+    except json.JSONDecodeError as exc:
+        raise WorkspaceFsError(
+            "read_failed",
+            f"Could not parse sandbox listing: {exc}",
+        ) from None
+    if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
+        raise WorkspaceFsError("read_failed", "Unexpected sandbox listing response")
+    if data.get("truncated"):
+        logger.warning("sandbox_workspace_tree_truncated max=%s", _MAX_ENTRIES)
 
-    return sorted(by_path.values(), key=lambda e: (e.type != "directory", e.path.lower()))
+    entries: list[FsEntry] = []
+    for item in data["entries"]:
+        try:
+            rel = str(item["path"]).replace("\\", "/")
+            entries.append(
+                FsEntry(
+                    name=_entry_name(rel),
+                    path=rel,
+                    type="directory" if item["type"] == "directory" else "file",
+                    size=int(item.get("size", 0) or 0),
+                    modified_at=float(item["mtime"]) if item.get("mtime") else None,
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return entries
 
 
 class UserWorkspaceFS:
@@ -201,12 +247,8 @@ class UserWorkspaceFS:
                 raise WorkspaceFsError("invalid_path", "Path escapes workspace root") from exc
             return _walk_local_root(local_root, start)
 
-        backend = get_user_backend(self._user_id)
-        if normalized:
-            probe = backend.ls(_backend_rel_path(normalized))
-            if probe.error:
-                raise WorkspaceFsError("not_found", probe.error)
-        return _entries_from_backend_glob(backend, normalized)
+        backend = _open_user_backend(self._user_id)
+        return _entries_from_sandbox_execute(backend, normalized)
 
     def read_file(self, rel_path: str) -> FsFile:
         normalized = _normalize_rel_path(rel_path)
@@ -258,8 +300,9 @@ class UserWorkspaceFS:
                 content=text,
             )
 
-        backend = get_user_backend(self._user_id)
-        result = backend.read(_backend_rel_path(normalized))
+        backend = _open_user_backend(self._user_id)
+        abs_path = _sandbox_abs_path(normalized)
+        result = backend.read(abs_path)
         if result.error:
             raise WorkspaceFsError("not_found", result.error)
         file_data = result.file_data
@@ -294,10 +337,9 @@ class UserWorkspaceFS:
 
 
 def workspace_root_label(user_id: str) -> str:
-    """Human-readable workspace root for UI hints."""
-    local_root = _local_root_for_user(user_id)
-    if local_root is not None:
-        return str(local_root)
+    """Human-readable workspace root for UI hints (does not touch the sandbox)."""
     backend_name = settings.DEEP_AGENT_BACKEND.strip().lower()
+    if backend_name == "local":
+        return str((settings.DEEP_AGENT_SANDBOX_LOCAL_ROOT / user_id).resolve())
     workdir = settings.DEEP_AGENT_SANDBOX_WORKDIR or "/workspace"
-    return f"{backend_name}:{workdir} (user {user_id})"
+    return f"{backend_name}:{workdir}"

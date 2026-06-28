@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Annotated
 
@@ -35,6 +36,22 @@ def _http_from_service_error(exc: WorkspaceServiceError) -> HTTPException:
     )
 
 
+def _entries_response(rows) -> WorkspaceTreeResponse:
+    return WorkspaceTreeResponse(
+        root="",
+        entries=[
+            WorkspaceEntry(
+                name=e.name,
+                path=e.path,
+                type="directory" if e.type == "directory" else "file",
+                size=e.size,
+                modified_at=e.modified_at,
+            )
+            for e in rows
+        ],
+    )
+
+
 @router.get("/root")
 async def get_workspace_root(
     current_user: Annotated[UserResponse, Depends(RequireUser)],
@@ -53,7 +70,15 @@ async def get_workspace_tree(
 ) -> WorkspaceTreeResponse:
     service = get_workspace_service(str(current_user.id))
     try:
-        rows = service.list_tree(path)
+        rows = await asyncio.wait_for(
+            asyncio.to_thread(service.list_tree, path),
+            timeout=90.0,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Workspace timed out while connecting to the agent sandbox.",
+        ) from exc
     except WorkspaceServiceError as exc:
         raise _http_from_service_error(exc) from None
     except Exception as exc:
@@ -63,19 +88,7 @@ async def get_workspace_tree(
             settings.DEEP_AGENT_BACKEND,
         )
         raise HTTPException(status_code=502, detail=f"Workspace backend error: {exc}") from None
-    return WorkspaceTreeResponse(
-        root="",
-        entries=[
-            WorkspaceEntry(
-                name=e.name,
-                path=e.path,
-                type="directory" if e.type == "directory" else "file",
-                size=e.size,
-                modified_at=e.modified_at,
-            )
-            for e in rows
-        ],
-    )
+    return _entries_response(rows)
 
 
 @router.get("/file", response_model=WorkspaceFileResponse)
@@ -85,7 +98,15 @@ async def get_workspace_file(
 ) -> WorkspaceFileResponse:
     service = get_workspace_service(str(current_user.id))
     try:
-        f = service.read_file(path)
+        f = await asyncio.wait_for(
+            asyncio.to_thread(service.read_file, path),
+            timeout=90.0,
+        )
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Workspace timed out while reading from the agent sandbox.",
+        ) from exc
     except WorkspaceServiceError as exc:
         raise _http_from_service_error(exc) from None
     except Exception as exc:
