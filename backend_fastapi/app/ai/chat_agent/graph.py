@@ -9,6 +9,10 @@ from app.ai.chat_agent.backend_factory import (
     backend_for_runtime,
     shutdown_all_sandboxes,
 )
+from app.ai.chat_agent.connector_tools import (
+    call_connector_mcp_tool,
+    list_connected_connectors,
+)
 from app.ai.chat_agent.knowledge_base_tools import search_knowledge_base
 from app.ai.chat_agent.memory_tools import (
     list_user_memories,
@@ -49,7 +53,10 @@ Long-term memory about the user may appear in the message context. Use it to per
 When the user shares durable facts, preferences, or profile details, read the user-memory skill and call save_user_memory.
 Use search_user_memories or list_user_memories when you need to recall what you know about the user."""
 
-_SYSTEM_PROMPT_TAIL = "\nSummarize tool results briefly for the user."
+_SYSTEM_PROMPT_CONNECTORS = """
+When the user asks about Google Calendar, Drive, or Gmail, use list_connected_connectors first.
+If connected, call call_connector_mcp_tool with the connector_id, official MCP tool name, and JSON arguments.
+Review MCP results before answering; never invent calendar events or file contents."""
 
 
 def _system_prompt() -> str:
@@ -60,7 +67,9 @@ def _system_prompt() -> str:
         parts.append(_SYSTEM_PROMPT_SKILLS)
     if settings.USER_MEMORY_ENABLED:
         parts.append(_SYSTEM_PROMPT_MEMORY)
-    parts.append(_SYSTEM_PROMPT_TAIL)
+    if settings.CONNECTORS_ENABLED:
+        parts.append(_SYSTEM_PROMPT_CONNECTORS)
+    parts.append("\nSummarize tool results briefly for the user.")
     return "\n".join(parts)
 
 
@@ -72,6 +81,8 @@ def _agent_tools() -> list:
         tools.append(search_knowledge_base)
     if settings.USER_MEMORY_ENABLED:
         tools.extend([save_user_memory, search_user_memories, list_user_memories])
+    if settings.CONNECTORS_ENABLED:
+        tools.extend([list_connected_connectors, call_connector_mcp_tool])
     if settings.BROWSER_PLAYWRIGHT_ENABLED:
         tools.extend(PLAYWRIGHT_BROWSER_TOOLS)
     return tools

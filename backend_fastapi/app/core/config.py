@@ -88,6 +88,13 @@ class Settings(BaseSettings):
     # Extra Google OAuth scopes (space-separated). e.g. "https://www.googleapis.com/auth/calendar.readonly" for Calendar. Base "openid email profile" are always included.
     GOOGLE_EXTRA_SCOPES: str = ""
 
+    # Enterprise connectors (Google Workspace MCP servers)
+    CONNECTORS_ENABLED: bool = True
+    # OAuth callback for connector authorization (add to Google Cloud redirect URIs).
+    CONNECTOR_OAUTH_REDIRECT_URI: str = ""
+    # Frontend page to return to after connector OAuth (e.g. http://localhost:3000/connector).
+    CONNECTOR_SUCCESS_REDIRECT_URL: str = ""
+
     # Optional: 32+ char key or Fernet base64 key to encrypt OAuth tokens at rest. If unset, tokens are stored plaintext (not recommended for production).
     ENCRYPTION_KEY: str = ""
     # Optional: previous key for rotation. Set after rotating ENCRYPTION_KEY so existing ciphertext still decrypts; remove after re-encryption.

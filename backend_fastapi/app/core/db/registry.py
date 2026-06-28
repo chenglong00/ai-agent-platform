@@ -10,5 +10,6 @@ def register_models() -> None:
     from app.modules.observability.model import ApiLog  # noqa: F401
     from app.modules.memory.model import UserMemory  # noqa: F401
     from app.modules.skills.model import AgentSkill  # noqa: F401
+    from app.modules.connector.model import UserConnector  # noqa: F401
     from app.modules.workflow.model import Workflow, WorkflowRun  # noqa: F401
     from app.modules.user.model import User  # noqa: F401
