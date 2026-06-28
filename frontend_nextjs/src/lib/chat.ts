@@ -61,6 +61,21 @@ function authHeaders(accessToken: string): HeadersInit {
   };
 }
 
+/** WebSocket URL for live Playwright screencast (JWT via query param). */
+export function browserLiveWsUrl(accessToken: string): string {
+  const token = encodeURIComponent(accessToken.trim());
+  const explicitWs = process.env.NEXT_PUBLIC_WS_URL?.trim().replace(/\/+$/, "");
+  if (explicitWs) {
+    return `${explicitWs}/api/v1/chat/browser/live?token=${token}`;
+  }
+  const httpBase = apiBaseUrl;
+  if (httpBase) {
+    const wsBase = httpBase.replace(/^http:/i, "ws:").replace(/^https:/i, "wss:");
+    return `${wsBase}/api/v1/chat/browser/live?token=${token}`;
+  }
+  return `ws://127.0.0.1:8000/api/v1/chat/browser/live?token=${token}`;
+}
+
 export async function fetchChatConversations(
   accessToken: string,
   options: { limit?: number; offset?: number } = {},

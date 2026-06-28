@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react"
 import { Loader2Icon, SendHorizonalIcon } from "lucide-react"
 import { flushSync } from "react-dom"
 
+import { BrowserLivePanel } from "@/components/ai/browser-live-panel"
 import { MessageResponse } from "@/components/ai/message"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
@@ -46,6 +47,10 @@ function makeId(prefix: string): string {
     return `${prefix}:${globalThis.crypto.randomUUID()}`
   }
   return `${prefix}:${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function hasBrowserToolCalls(toolCalls?: ToolCallInfo[]): boolean {
+  return !!toolCalls?.some(t => t.tool_name.startsWith("browser_"))
 }
 
 export function WorkspaceChatPanel({
@@ -280,6 +285,11 @@ export function WorkspaceChatPanel({
             </div>
           ) : (
             <div key={msg.id} className="space-y-1.5">
+              {msg.pending &&
+                hasBrowserToolCalls(msg.toolCalls) &&
+                getToken() && (
+                  <BrowserLivePanel accessToken={getToken()!} className="text-foreground" />
+                )}
               {msg.toolCalls && msg.toolCalls.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
                   {msg.toolCalls.map(tc => (

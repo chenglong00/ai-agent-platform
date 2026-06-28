@@ -59,10 +59,14 @@ htmlcov/
 .dmypy.json
 dmypy.json
 
+# --- Logs (never commit) ------------------------------------------------------
+logs/
+**/logs/
+*.log
+*.jsonl
+
 # --- Backend runtime / local data ---------------------------------------------
-backend_fastapi/logs/
 backend_fastapi/data/
-backend_fastapi/*.jsonl
 
 # Per-user agent sandboxes, uploads, browser profiles (under data/)
 # Keep empty dirs if you add .gitkeep files:
@@ -105,8 +109,6 @@ playwright/.cache/
 .blob-storage/
 
 # --- Docker / local tooling ---------------------------------------------------
-*.log
-
 # --- IDE / editors (optional local overrides) ---------------------------------
 .idea/
 .vscode/

@@ -4,13 +4,15 @@ from __future__ import annotations
 
 import base64
 import logging
+from collections.abc import Awaitable, Callable
+from typing import Any
 from urllib.parse import urlparse
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
 from playwright.async_api import Error as PlaywrightError
 
-from app.ai.chat_agent.playwright_pool import browser_page, release_user_browser
+from app.ai.chat_agent.playwright_pool import browser_page, invalidate_user_browser
 from app.ai.chat_agent.run_context import get_user_id_from_run
 from app.core.config import settings
 
@@ -37,15 +39,53 @@ def _truncate(text: str, limit: int | None = None) -> str:
     return cleaned[: cap - 3] + "..."
 
 
+def _is_closed_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    return "closed" in message or "target page" in message
+
+
 async def _page_state_summary(page) -> str:
     title = await page.title()
     url = page.url
     return f"URL: {url}\nTitle: {title}"
 
 
+async def _run_browser_action(
+    user_id: str,
+    action: Callable[[Any], Awaitable[str]],
+    *,
+    log_label: str,
+) -> str:
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            async with browser_page(user_id) as page:
+                return await action(page)
+        except PlaywrightError as exc:
+            last_error = exc
+            if _is_closed_error(exc) and attempt == 0:
+                logger.warning(
+                    "%s_retry_after_closed user_id=%s attempt=%s",
+                    log_label,
+                    user_id,
+                    attempt + 1,
+                )
+                await invalidate_user_browser(user_id)
+                continue
+            logger.exception("%s_failed user_id=%s", log_label, user_id)
+            return f"{log_label.replace('_', ' ').title()} failed: {exc}"
+        except Exception as exc:
+            logger.exception("%s_failed user_id=%s", log_label, user_id)
+            return f"{log_label.replace('_', ' ').title()} failed: {exc}"
+
+    if last_error is not None:
+        return f"{log_label.replace('_', ' ').title()} failed: {last_error}"
+    return f"{log_label.replace('_', ' ').title()} failed: browser unavailable"
+
+
 @tool
 async def browser_goto(url: str, runtime: ToolRuntime) -> str:
-    """Open or navigate the browser to a URL (http/https only)."""
+    """Open or navigate the browser to a URL (http/https only). Reuses the same browser session for follow-up reads and clicks."""
     if not settings.BROWSER_PLAYWRIGHT_ENABLED:
         return _disabled()
     try:
@@ -54,36 +94,28 @@ async def browser_goto(url: str, runtime: ToolRuntime) -> str:
         return str(exc)
 
     user_id = get_user_id_from_run(runtime)
-    try:
-        async with browser_page(user_id) as page:
-            await page.goto(target, wait_until="domcontentloaded")
-            return f"Navigated successfully.\n{await _page_state_summary(page)}"
-    except PlaywrightError as exc:
-        logger.exception("browser_goto_failed user_id=%s url=%s", user_id, target)
-        return f"Navigation failed: {exc}"
-    except Exception as exc:
-        logger.exception("browser_goto_failed user_id=%s url=%s", user_id, target)
-        return f"Navigation failed: {exc}"
+
+    async def action(page) -> str:
+        await page.goto(target, wait_until="domcontentloaded")
+        return f"Navigated successfully.\n{await _page_state_summary(page)}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_goto")
 
 
 @tool
 async def browser_read(runtime: ToolRuntime) -> str:
-    """Read visible text from the current page to decide the next browser action."""
+    """Read visible text from the current page. Requires a prior browser_goto in the same turn; the session stays open between browser tools."""
     if not settings.BROWSER_PLAYWRIGHT_ENABLED:
         return _disabled()
 
     user_id = get_user_id_from_run(runtime)
-    try:
-        async with browser_page(user_id) as page:
-            body_text = await page.locator("body").inner_text()
-            excerpt = _truncate(body_text)
-            return f"{await _page_state_summary(page)}\n\nVisible text:\n{excerpt}"
-    except PlaywrightError as exc:
-        logger.exception("browser_read_failed user_id=%s", user_id)
-        return f"Could not read page: {exc}"
-    except Exception as exc:
-        logger.exception("browser_read_failed user_id=%s", user_id)
-        return f"Could not read page: {exc}"
+
+    async def action(page) -> str:
+        body_text = await page.locator("body").inner_text()
+        excerpt = _truncate(body_text)
+        return f"{await _page_state_summary(page)}\n\nVisible text:\n{excerpt}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_read")
 
 
 @tool
@@ -97,16 +129,12 @@ async def browser_click(selector: str, runtime: ToolRuntime) -> str:
         return "Selector is required."
 
     user_id = get_user_id_from_run(runtime)
-    try:
-        async with browser_page(user_id) as page:
-            await page.locator(sel).first.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
-            return f"Clicked `{sel}`.\n{await _page_state_summary(page)}"
-    except PlaywrightError as exc:
-        logger.exception("browser_click_failed user_id=%s selector=%s", user_id, sel)
-        return f"Click failed on `{sel}`: {exc}"
-    except Exception as exc:
-        logger.exception("browser_click_failed user_id=%s selector=%s", user_id, sel)
-        return f"Click failed on `{sel}`: {exc}"
+
+    async def action(page) -> str:
+        await page.locator(sel).first.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
+        return f"Clicked `{sel}`.\n{await _page_state_summary(page)}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_click")
 
 
 @tool
@@ -125,20 +153,16 @@ async def browser_type(
         return "Selector is required."
 
     user_id = get_user_id_from_run(runtime)
-    try:
-        async with browser_page(user_id) as page:
-            locator = page.locator(sel).first
-            await locator.fill(text, timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
-            if press_enter:
-                await locator.press("Enter")
-            action = "Typed and pressed Enter" if press_enter else "Typed"
-            return f"{action} into `{sel}`.\n{await _page_state_summary(page)}"
-    except PlaywrightError as exc:
-        logger.exception("browser_type_failed user_id=%s selector=%s", user_id, sel)
-        return f"Type failed on `{sel}`: {exc}"
-    except Exception as exc:
-        logger.exception("browser_type_failed user_id=%s selector=%s", user_id, sel)
-        return f"Type failed on `{sel}`: {exc}"
+
+    async def action(page) -> str:
+        locator = page.locator(sel).first
+        await locator.fill(text, timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
+        if press_enter:
+            await locator.press("Enter")
+        action_label = "Typed and pressed Enter" if press_enter else "Typed"
+        return f"{action_label} into `{sel}`.\n{await _page_state_summary(page)}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_type")
 
 
 @tool
@@ -152,16 +176,12 @@ async def browser_press(key: str, runtime: ToolRuntime) -> str:
         return "Key name is required."
 
     user_id = get_user_id_from_run(runtime)
-    try:
-        async with browser_page(user_id) as page:
-            await page.keyboard.press(key_name)
-            return f"Pressed {key_name}.\n{await _page_state_summary(page)}"
-    except PlaywrightError as exc:
-        logger.exception("browser_press_failed user_id=%s key=%s", user_id, key_name)
-        return f"Key press failed: {exc}"
-    except Exception as exc:
-        logger.exception("browser_press_failed user_id=%s key=%s", user_id, key_name)
-        return f"Key press failed: {exc}"
+
+    async def action(page) -> str:
+        await page.keyboard.press(key_name)
+        return f"Pressed {key_name}.\n{await _page_state_summary(page)}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_press")
 
 
 @tool
@@ -171,35 +191,20 @@ async def browser_screenshot(runtime: ToolRuntime) -> str:
         return _disabled()
 
     user_id = get_user_id_from_run(runtime)
-    try:
-        async with browser_page(user_id) as page:
-            png = await page.screenshot(type="png", full_page=False)
-            encoded = base64.b64encode(png).decode("ascii")
-            runtime.emit_output_delta(
-                {
-                    "type": "screenshot",
-                    "url": page.url,
-                    "image_base64": encoded,
-                },
-            )
-            return f"Screenshot captured.\n{await _page_state_summary(page)}"
-    except PlaywrightError as exc:
-        logger.exception("browser_screenshot_failed user_id=%s", user_id)
-        return f"Screenshot failed: {exc}"
-    except Exception as exc:
-        logger.exception("browser_screenshot_failed user_id=%s", user_id)
-        return f"Screenshot failed: {exc}"
 
+    async def action(page) -> str:
+        png = await page.screenshot(type="png", full_page=False)
+        encoded = base64.b64encode(png).decode("ascii")
+        runtime.emit_output_delta(
+            {
+                "type": "screenshot",
+                "url": page.url,
+                "image_base64": encoded,
+            },
+        )
+        return f"Screenshot captured.\n{await _page_state_summary(page)}"
 
-@tool
-async def browser_close(runtime: ToolRuntime) -> str:
-    """Close the browser session for this user when finished browsing."""
-    if not settings.BROWSER_PLAYWRIGHT_ENABLED:
-        return _disabled()
-
-    user_id = get_user_id_from_run(runtime)
-    await release_user_browser(user_id)
-    return "Browser session closed."
+    return await _run_browser_action(user_id, action, log_label="browser_screenshot")
 
 
 PLAYWRIGHT_BROWSER_TOOLS = [
@@ -209,5 +214,4 @@ PLAYWRIGHT_BROWSER_TOOLS = [
     browser_type,
     browser_press,
     browser_screenshot,
-    browser_close,
 ]

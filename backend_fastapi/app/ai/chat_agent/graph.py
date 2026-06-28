@@ -28,7 +28,8 @@ When the user asks to browse the web, research a site, fill a form, or interact 
 2. browser_read to inspect visible page text before acting
 3. browser_click, browser_type, browser_press for interactions
 4. browser_screenshot when the user should see the current page
-5. browser_close only once when completely finished (never while other browser tools may still run)
+The browser session stays open across these steps — do not try to close or reset it yourself.
+Always browser_goto first, then browser_read, then other actions as needed.
 Work step-by-step; read the page after navigation or clicks when unsure what to do next."""
 
 _SYSTEM_PROMPT_TAIL = "\nSummarize tool results briefly for the user."

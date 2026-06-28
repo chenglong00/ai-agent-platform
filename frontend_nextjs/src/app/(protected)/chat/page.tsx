@@ -46,6 +46,7 @@ import { getToken } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import type { ChatMessageDto, MessageBlockDto, SubagentInfo, TodoItem, ToolCallInfo } from "@/lib/chat"
 import { SubagentProgress, SynthesisIndicator } from "@/components/ai/subagent-card"
+import { BrowserLivePanel } from "@/components/ai/browser-live-panel"
 import { ToolCallProgress } from "@/components/ai/tool-call-card"
 import { AssistantTurnContent, parseMessageBlocks } from "@/components/ai/message-blocks"
 import { TodoList } from "@/components/ai/todo-list"
@@ -100,6 +101,10 @@ function makeTempId(prefix: string): string {
   return `${prefix}:${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+function hasBrowserToolCalls(toolCalls?: ToolCallInfo[]): boolean {
+  return !!toolCalls?.some(t => t.tool_name.startsWith("browser_"))
+}
+
 function ChatPageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -107,7 +112,7 @@ function ChatPageContent() {
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [sessionReady, setSessionReady] = useState(false)
   const [initError, setInitError] = useState<string | null>(null)
-  const [sending, setSending] = useState(false)
+  const [authToken, setAuthToken] = useState("")
   const [conversationTitle, setConversationTitle] = useState("")
   const [titleEditing, setTitleEditing] = useState(false)
   const [titleDraft, setTitleDraft] = useState("")
@@ -156,6 +161,7 @@ function ChatPageContent() {
         router.replace("/login")
         return
       }
+      setAuthToken(token)
 
       if (searchParams.get("new") === "1") {
         localStorage.removeItem(chatConversationStorageKey)
@@ -611,6 +617,15 @@ function ChatPageContent() {
                                   className="mb-2 mx-1"
                                 />
                               )}
+
+                              {/* Live browser stream while agent uses browser_* tools */}
+                              {isActiveTurn &&
+                                hasBrowserToolCalls(msg.toolCalls) &&
+                                authToken && (
+                                  <div className="mb-2 px-1">
+                                    <BrowserLivePanel accessToken={authToken} />
+                                  </div>
+                                )}
 
                               {/* Tool call cards — appear as soon as a tool starts */}
                               {hasToolCalls && (

@@ -27,11 +27,13 @@ from app.modules.chat.schema import (
     UpdateConversationRequest,
 )
 from app.modules.chat.service import chat_service
+from app.modules.chat.browser_live import router as browser_live_router
 from app.modules.user.schema import UserResponse
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+router.include_router(browser_live_router)
 
 
 def _sse(data: dict) -> str:
