@@ -14,6 +14,7 @@ from app.ai.chat_agent.playwright_pool import shutdown_all_browsers
 from app.ai.chat_agent.playwright_tools import PLAYWRIGHT_BROWSER_TOOLS
 from app.ai.chat_agent.tools import check_weather
 from app.ai.config import AgentSettings
+from app.ai.skills.tools import list_skills, read_skill
 from app.core.config import settings
 
 _agent: Runnable | None = None
@@ -35,6 +36,9 @@ The browser session stays open across these steps — do not try to close or res
 Always browser_goto first, then browser_read, then other actions as needed.
 Work step-by-step; read the page after navigation or clicks when unsure what to do next."""
 
+_SYSTEM_PROMPT_SKILLS = """
+Use list_skills to see skills available to this user, then read_skill with a skill id before following specialized workflows."""
+
 _SYSTEM_PROMPT_TAIL = "\nSummarize tool results briefly for the user."
 
 
@@ -42,12 +46,16 @@ def _system_prompt() -> str:
     parts = [_SYSTEM_PROMPT_BASE]
     if settings.BROWSER_PLAYWRIGHT_ENABLED:
         parts.append(_SYSTEM_PROMPT_BROWSER)
+    if settings.DEEP_AGENT_SKILLS_ENABLED:
+        parts.append(_SYSTEM_PROMPT_SKILLS)
     parts.append(_SYSTEM_PROMPT_TAIL)
     return "\n".join(parts)
 
 
 def _agent_tools() -> list:
     tools = [check_weather]
+    if settings.DEEP_AGENT_SKILLS_ENABLED:
+        tools.extend([list_skills, read_skill])
     if settings.KNOWLEDGE_BASE_RAG_ENABLED:
         tools.append(search_knowledge_base)
     if settings.BROWSER_PLAYWRIGHT_ENABLED:

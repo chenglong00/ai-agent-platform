@@ -20,7 +20,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { SquarePenIcon, ChartBarIcon, FolderIcon, UsersIcon, CameraIcon, FileTextIcon, CircleHelpIcon, SearchIcon, DatabaseIcon, FileChartColumnIcon, SparklesIcon, LayoutDashboard } from "lucide-react"
+import { SquarePenIcon, ChartBarIcon, FolderIcon, UsersIcon, CameraIcon, FileTextIcon, CircleHelpIcon, SearchIcon, DatabaseIcon, BrainIcon, SparklesIcon, LayoutDashboard } from "lucide-react"
 import {
   fetchCurrentUser,
   sidebarDisplayName,
@@ -162,17 +162,17 @@ const data = {
     },
     {
       name: "Skills",
-      url: "#",
+      url: "/skills",
       icon: (
         <SparklesIcon
         />
       ),
     },
     {
-      name: "Reports",
+      name: "Memory",
       url: "#",
       icon: (
-        <FileChartColumnIcon
+        <BrainIcon
         />
       ),
     },

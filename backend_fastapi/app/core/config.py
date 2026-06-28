@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     KNOWLEDGE_BASE_GEMINI_PARSING_ENABLED: bool = True
     KNOWLEDGE_BASE_GEMINI_PARSING_BATCH_PAGES: int = 10
 
+    # Deep agent skills (app/ai/skills/*/SKILL.md)
+    DEEP_AGENT_SKILLS_ENABLED: bool = True
+
     # Initial owner (optional): set env to create an OWNER user and credentials identity on first run
     INITIAL_OWNER_EMAIL: str = ""
     INITIAL_OWNER_PASSWORD: str = ""

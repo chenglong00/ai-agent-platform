@@ -23,6 +23,7 @@ import { getToken } from "@/lib/auth"
 import {
   buildWorkspaceTree,
   fetchWorkspaceFile,
+  fetchWorkspaceRoot,
   fetchWorkspaceTree,
   type WorkspaceEntry,
   type WorkspaceTreeNode,
@@ -35,6 +36,7 @@ export default function WorkspacePage() {
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [selectedLoading, setSelectedLoading] = useState(false)
   const [treeLoading, setTreeLoading] = useState(true)
+  const [workspaceRoot, setWorkspaceRoot] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const initialSnapshotTaken = useRef(false)
 
@@ -67,7 +69,11 @@ export default function WorkspacePage() {
       setTreeLoading(true)
       setError(null)
       try {
-        const result = await fetchWorkspaceTree(token)
+        const [result, rootInfo] = await Promise.all([
+          fetchWorkspaceTree(token),
+          fetchWorkspaceRoot(token),
+        ])
+        setWorkspaceRoot(rootInfo.root)
         setEntries(result.entries)
 
         // Fetch contents for all files (skip dirs, skip large files signaled by size)
@@ -159,7 +165,7 @@ export default function WorkspacePage() {
           <SidebarTrigger className="shrink-0 md:hidden" />
           <h1 className="text-base font-medium">Workspace</h1>
           <span className="ml-2 truncate text-xs text-muted-foreground">
-            backend_fastapi/app/ai/workspace
+            {workspaceRoot ?? "Loading workspace root…"}
           </span>
           <div className="ml-auto flex items-center gap-2">
             <Button

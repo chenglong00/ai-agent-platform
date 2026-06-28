@@ -7,7 +7,7 @@ import logging
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.modules.knowledge_base.indexes import ensure_indexes
+from app.modules.knowledge_base.indexes import ensure_indexes as ensure_kb_indexes
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,7 @@ async def init_mongodb() -> None:
     _db = _client.get_default_database()
     await _client.admin.command("ping")
     logger.info("knowledge_base_mongodb_initialized database=%s", _db.name)
-    await ensure_indexes(_db)
+    await ensure_kb_indexes(_db)
 
 
 async def close_mongodb() -> None:

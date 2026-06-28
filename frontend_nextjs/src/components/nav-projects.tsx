@@ -31,7 +31,7 @@ export function NavProjects({
 
   return (
     <SidebarGroup>
-      <SidebarGroupLabel>Knowledge</SidebarGroupLabel>
+      <SidebarGroupLabel>Harness</SidebarGroupLabel>
       <SidebarMenu>
         {items.map((item) => (
           <SidebarMenuItem key={item.name}>

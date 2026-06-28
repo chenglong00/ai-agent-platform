@@ -8,6 +8,7 @@ from app.modules.auth.router import router as auth_router
 from app.modules.chat.router import router as chat_router
 from app.modules.group.router import router as group_router
 from app.modules.knowledge_base.router import router as knowledge_base_router
+from app.modules.skills.router import router as skills_router
 from app.modules.workspace.router import router as workspace_router
 
 api_router = APIRouter()
@@ -21,5 +22,10 @@ api_router.include_router(
     knowledge_base_router,
     prefix="/knowledge-base",
     tags=["knowledge-base"],
+)
+api_router.include_router(
+    skills_router,
+    prefix="/skills",
+    tags=["skills"],
 )
 api_router.include_router(workspace_router, prefix="/workspace", tags=["workspace"])

@@ -16,6 +16,11 @@ export type WorkspaceTreeResult = {
   entries: WorkspaceEntry[];
 };
 
+export type WorkspaceRootResult = {
+  root: string;
+  backend: string;
+};
+
 export type WorkspaceFileResult = {
   path: string;
   size: number;
@@ -29,6 +34,17 @@ function authHeaders(accessToken: string): HeadersInit {
   return {
     Authorization: `Bearer ${accessToken.trim()}`,
   };
+}
+
+export async function fetchWorkspaceRoot(
+  accessToken: string,
+): Promise<WorkspaceRootResult> {
+  const res = await fetch(`${workspaceBase}/root`, {
+    headers: authHeaders(accessToken),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res));
+  return (await res.json()) as WorkspaceRootResult;
 }
 
 export async function fetchWorkspaceTree(

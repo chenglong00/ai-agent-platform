@@ -6,10 +6,10 @@ from langchain.agents import create_agent
 from langchain.chat_models import init_chat_model
 
 from app.ai.config import AgentSettings
+from app.ai.skills import SKILLS_DIR
 from app.ai.tools.todos import set_todos
 
 _PROMPTS_DIR = Path(__file__).resolve().parent / "prompts"
-SKILLS_DIR = Path(__file__).resolve().parent.parent / "skills"
 
 ORCHESTRATOR_TOOLS = [set_todos]
 
