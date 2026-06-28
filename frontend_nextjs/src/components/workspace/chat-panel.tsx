@@ -13,8 +13,12 @@ import {
 import { SubagentProgress, SynthesisIndicator } from "@/components/ai/subagent-card"
 import { ToolCallProgress } from "@/components/ai/tool-call-card"
 import { TodoList } from "@/components/ai/todo-list"
+import { ContextMentionMenuPortal } from "@/components/ai/context-mention-menu"
+import { SkillSlashMenuPortal } from "@/components/ai/skill-slash-menu"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
+import { useContextMentionMenu } from "@/hooks/use-context-mention-menu"
+import { useSkillSlashMenu } from "@/hooks/use-skill-slash-menu"
 import { getToken } from "@/lib/auth"
 import {
   createChatConversation,
@@ -98,6 +102,9 @@ export function WorkspaceChatPanel({
   const [messages, setMessages] = useState<WorkspaceChatMessage[]>([])
   const [sessionReady, setSessionReady] = useState(false)
   const [text, setText] = useState("")
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const slash = useSkillSlashMenu({ value: text, onValueChange: setText })
+  const context = useContextMentionMenu({ value: text, onValueChange: setText })
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [authToken, setAuthToken] = useState("")
@@ -476,21 +483,62 @@ export function WorkspaceChatPanel({
 
       <form onSubmit={handleSubmit} className="border-t px-3 py-2">
         <div className="flex items-end gap-2">
-          <Textarea
-            value={text}
-            onChange={e => setText(e.target.value)}
-            placeholder="Ask the agent to modify files…"
-            disabled={sending || !sessionReady}
-            rows={2}
-            onKeyDown={e => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault()
-                void sendPrompt(text)
-                setText("")
-              }
-            }}
-            className="min-h-[42px] resize-none text-xs"
-          />
+          <div className="relative min-w-0 flex-1">
+            <ContextMentionMenuPortal
+              open={context.menuOpen}
+              anchorRef={textareaRef}
+              items={context.filteredItems}
+              selectedIndex={context.selectedIndex}
+              onSelect={context.selectItem}
+              loading={context.loading}
+            />
+            <SkillSlashMenuPortal
+              open={slash.menuOpen && !context.menuOpen}
+              anchorRef={textareaRef}
+              skills={slash.filteredSkills}
+              selectedIndex={slash.selectedIndex}
+              onSelect={slash.selectSkill}
+              loading={slash.skillsLoading}
+            />
+            <Textarea
+              ref={textareaRef}
+              value={text}
+              onChange={e => {
+                setText(e.target.value)
+                slash.textareaRef.current = e.currentTarget
+                context.textareaRef.current = e.currentTarget
+                slash.onTextareaChange(e)
+                context.onTextareaChange(e)
+              }}
+              placeholder="Ask the agent… (/ skills, @ context)"
+              disabled={sending || !sessionReady}
+              rows={2}
+              onSelect={e => {
+                slash.textareaRef.current = e.currentTarget
+                context.textareaRef.current = e.currentTarget
+                slash.onTextareaSelect(e)
+                context.onTextareaSelect(e)
+              }}
+              onClick={e => {
+                slash.textareaRef.current = e.currentTarget
+                context.textareaRef.current = e.currentTarget
+                slash.onTextareaSelect(e)
+                context.onTextareaSelect(e)
+              }}
+              onKeyDown={e => {
+                slash.textareaRef.current = e.currentTarget
+                context.textareaRef.current = e.currentTarget
+                if (context.onTextareaKeyDown(e)) return
+                if (slash.onTextareaKeyDown(e)) return
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault()
+                  void sendPrompt(text)
+                  setText("")
+                }
+              }}
+              className="min-h-[42px] resize-none text-xs"
+            />
+          </div>
           <Button
             type="submit"
             size="icon"

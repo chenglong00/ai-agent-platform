@@ -11,6 +11,7 @@ import {
   ConversationScrollButton,
 } from "@/components/ai/conversation"
 import { Message, MessageContent, MessageResponse } from "@/components/ai/message"
+import { PromptInputSkillTextarea } from "@/components/ai/prompt-input-skill-textarea"
 import {
   PromptInput,
   PromptInputAttachments,
@@ -19,7 +20,6 @@ import {
   PromptInputFooter,
   PromptInputProvider,
   PromptInputSubmit,
-  PromptInputTextarea,
   PromptInputTools,
   PromptInputActionMenu,
   PromptInputActionMenuTrigger,
@@ -686,7 +686,7 @@ function ChatPageContent() {
                       {attachment => <PromptInputAttachment data={attachment} />}
                     </PromptInputAttachments>
                     <PromptInputBody>
-                      <PromptInputTextarea placeholder="Type your message…" />
+                      <PromptInputSkillTextarea />
                     </PromptInputBody>
                     <PromptInputFooter>
                       <PromptInputTools>

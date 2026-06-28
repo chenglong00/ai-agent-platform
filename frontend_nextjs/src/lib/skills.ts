@@ -113,6 +113,17 @@ export async function fetchSkills(
   return res.json() as Promise<SkillSummary[]>;
 }
 
+/** Built-in skills plus enabled custom skills (for slash-command autocomplete). */
+export async function fetchAllAvailableSkills(
+  accessToken: string,
+): Promise<SkillSummary[]> {
+  const [builtins, custom] = await Promise.all([
+    fetchBuiltinSkills(accessToken),
+    fetchSkills(accessToken),
+  ]);
+  return [...builtins, ...custom.filter(skill => skill.enabled)];
+}
+
 export async function fetchSkill(
   accessToken: string,
   skillId: string,
