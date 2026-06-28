@@ -65,6 +65,13 @@ services:
   #     DATABASE_URL: 
   #     RUN_MIGRATIONS: ${RUN_MIGRATIONS:-true}
   #     GOOGLE_APPLICATION_CREDENTIALS: 
+  #     DEEP_AGENT_BACKEND: ${DEEP_AGENT_BACKEND:-local}
+  #     DEEP_AGENT_SANDBOX_WORKDIR: ${DEEP_AGENT_SANDBOX_WORKDIR:-/workspace}
+  #     DAYTONA_API_KEY: ${DAYTONA_API_KEY:-}
+  #     DAYTONA_TARGET: ${DAYTONA_TARGET:-us}
+  #     MODAL_TOKEN_ID: ${MODAL_TOKEN_ID:-}
+  #     MODAL_TOKEN_SECRET: ${MODAL_TOKEN_SECRET:-}
+  #     DEEP_AGENT_MODAL_APP: ${DEEP_AGENT_MODAL_APP:-ai-application-platform-deep-agent}
   #   env_file:
   #     - path: ./backend_fastapi/.env
   #       required: false

@@ -8,9 +8,8 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from starlette.requests import Request
 from typing import Annotated
 from app.core.config import settings
-from app.core.dependency import get_db
-from app.core.exceptions import AuthenticationError
-from app.core.oauth import build_auth_success_redirect_url, get_oauth, is_google_oauth_configured
+from app.core.security.dependencies import get_db
+from app.core.security.oauth import build_auth_success_redirect_url, get_oauth, is_google_oauth_configured
 from app.modules.auth.oauth_service import oauth_service
 
 logger = logging.getLogger(__name__)
@@ -51,7 +50,5 @@ async def google_callback(
         access_token_jwt = await oauth_service.complete_login(session, token, "google")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    except AuthenticationError:
-        raise HTTPException(status_code=403, detail="Account is disabled or not allowed")
 
     return RedirectResponse(url=build_auth_success_redirect_url(access_token_jwt))

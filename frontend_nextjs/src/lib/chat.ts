@@ -189,6 +189,8 @@ export type ToolCallInfo = {
   result: string | undefined
   started_at: number | undefined
   completed_at: number | undefined
+  previewImageBase64?: string
+  previewUrl?: string
 }
 
 export type StreamEvent =
@@ -199,6 +201,7 @@ export type StreamEvent =
   | { type: "subagent_done"; id: string; result: string; status: "complete" | "error"; completed_at: number }
   | { type: "tool_call_start"; id: string; tool_name: string; args: Record<string, unknown>; started_at: number }
   | { type: "tool_call_end"; id: string; tool_name: string; result: string; status: "complete" | "error"; completed_at: number }
+  | { type: "browser_preview"; tool_call_id: string; url: string; image_base64: string }
   | { type: "todos_update"; todos: TodoItem[] }
   | { type: "interrupt"; pending_tool_calls: { tool_name: string; args: Record<string, unknown>; description: string }[] }
   | { type: "saved"; assistant_message_id: string; assistant_text: string; assistant_blocks?: MessageBlockDto[]; interrupted: boolean }

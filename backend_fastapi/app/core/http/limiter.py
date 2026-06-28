@@ -2,7 +2,7 @@
 
 Use in routes with the decorator (request must be in the route):
 
-    from app.core.limiter import limiter
+    from app.core.http.limiter import limiter
 
     @router.get("/login")
     @limiter.limit("5/minute")

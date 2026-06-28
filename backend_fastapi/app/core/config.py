@@ -1,4 +1,3 @@
-import os
 from pathlib import Path
 
 from pydantic import computed_field
@@ -51,6 +50,8 @@ class Settings(BaseSettings):
     TIMEZONE: str = "UTC"
 
     DATABASE_URL: str = ""
+    DB_POOL_SIZE: int = 5
+    DB_MAX_OVERFLOW: int = 10
 
     MONGODB_URI: str = ""
     KNOWLEDGE_BASE_UPLOAD_DIR: Path = Path("data/knowledge_base")
@@ -75,15 +76,32 @@ class Settings(BaseSettings):
     # Optional: previous key for rotation. Set after rotating ENCRYPTION_KEY so existing ciphertext still decrypts; remove after re-encryption.
     ENCRYPTION_KEY_PREVIOUS: str = ""
 
-    # Deep agent backend selection: "local" (default, LocalShellBackend) or
-    # "modal" (Modal sandbox via langchain_modal.ModalSandbox). Modal mode
-    # requires MODAL_TOKEN_ID and MODAL_TOKEN_SECRET to be set in the env.
+    # Deep agent backend: "local" | "daytona" | "modal"
     DEEP_AGENT_BACKEND: str = "local"
-    # Name of the Modal app to use for sandboxes (created if missing).
-    DEEP_AGENT_MODAL_APP: str = "ai-application-platform-deep-agent"
-    # Working directory inside the sandbox the agent operates in. Mirrored by
-    # the workspace UI when DEEP_AGENT_BACKEND="modal".
+    # Working directory inside the sandbox the agent operates in.
     DEEP_AGENT_SANDBOX_WORKDIR: str = "/workspace"
+    # Host directory for per-user local sandboxes (DEEP_AGENT_BACKEND=local).
+    DEEP_AGENT_SANDBOX_LOCAL_ROOT: Path = Path("data/agent_sandboxes")
+    # Idle TTL for pooled user sandboxes; 0 disables automatic cleanup.
+    DEEP_AGENT_SANDBOX_IDLE_TTL_SECONDS: int = 3600
+    DEEP_AGENT_SANDBOX_CLEANUP_INTERVAL_SECONDS: int = 300
+    # Modal (DEEP_AGENT_BACKEND=modal): requires MODAL_TOKEN_ID and MODAL_TOKEN_SECRET.
+    DEEP_AGENT_MODAL_APP: str = "ai-application-platform-deep-agent"
+    MODAL_TOKEN_ID: str = ""
+    MODAL_TOKEN_SECRET: str = ""
+    # Daytona (DEEP_AGENT_BACKEND=daytona): requires DAYTONA_API_KEY.
+    DAYTONA_API_KEY: str = ""
+    DAYTONA_TARGET: str = "us"
+    DAYTONA_API_URL: str = ""
+
+    # Playwright browser tools (per-user pooled Chromium sessions)
+    BROWSER_PLAYWRIGHT_ENABLED: bool = False
+    BROWSER_PLAYWRIGHT_HEADLESS: bool = True
+    BROWSER_PLAYWRIGHT_TIMEOUT_MS: int = 30_000
+    BROWSER_PLAYWRIGHT_VIEWPORT_WIDTH: int = 1280
+    BROWSER_PLAYWRIGHT_VIEWPORT_HEIGHT: int = 720
+    BROWSER_PLAYWRIGHT_READ_MAX_CHARS: int = 4000
+    BROWSER_PLAYWRIGHT_IDLE_TTL_SECONDS: int = 1800
 
 
 def prepare_settings() -> Settings:

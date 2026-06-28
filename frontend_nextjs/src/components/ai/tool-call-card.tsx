@@ -1,7 +1,7 @@
 "use client"
 
 import { memo, useEffect, useState } from "react"
-import { ChevronRightIcon, Loader2Icon, WrenchIcon } from "lucide-react"
+import { ChevronRightIcon, GlobeIcon, Loader2Icon, WrenchIcon } from "lucide-react"
 import { cn } from "@/lib/utils"
 import type { ToolCallInfo } from "@/lib/chat"
 import { CodeBlock } from "@/components/ai/code-block"
@@ -19,7 +19,11 @@ function getElapsedTime(
 }
 
 function formatToolName(name: string): string {
-  return name.replace(/_/g, " ")
+  return name.replace(/^browser_/, "").replace(/_/g, " ")
+}
+
+function isBrowserTool(name: string): boolean {
+  return name.startsWith("browser_")
 }
 
 function formatArgsInline(args: Record<string, unknown>): string {
@@ -69,8 +73,14 @@ export const ToolCallCard = memo(({ toolCall, className }: ToolCallCardProps) =>
           )}
         />
         <StatusDot status={toolCall.status} />
-        <WrenchIcon className="size-3 shrink-0 text-muted-foreground" />
-        <span className="shrink-0 font-medium capitalize">{formatToolName(toolCall.tool_name)}</span>
+        {isBrowserTool(toolCall.tool_name) ? (
+          <GlobeIcon className="size-3 shrink-0 text-muted-foreground" />
+        ) : (
+          <WrenchIcon className="size-3 shrink-0 text-muted-foreground" />
+        )}
+        <span className="shrink-0 font-medium capitalize">
+          {isBrowserTool(toolCall.tool_name) ? `Browser · ${formatToolName(toolCall.tool_name)}` : formatToolName(toolCall.tool_name)}
+        </span>
         {argsInline ? (
           <span className="min-w-0 truncate text-muted-foreground">{argsInline}</span>
         ) : null}
@@ -97,6 +107,22 @@ export const ToolCallCard = memo(({ toolCall, className }: ToolCallCardProps) =>
             />
           </div>
         )}
+        {toolCall.previewImageBase64 ? (
+          <div className="mb-2">
+            <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              Preview
+            </p>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={`data:image/png;base64,${toolCall.previewImageBase64}`}
+              alt={toolCall.previewUrl ? `Screenshot of ${toolCall.previewUrl}` : "Browser screenshot"}
+              className="max-h-64 w-full rounded border border-border/60 object-contain bg-background"
+            />
+            {toolCall.previewUrl ? (
+              <p className="mt-1 truncate text-muted-foreground">{toolCall.previewUrl}</p>
+            ) : null}
+          </div>
+        ) : null}
         {toolCall.result !== undefined ? (
           <div>
             <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">

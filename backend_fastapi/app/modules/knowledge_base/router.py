@@ -11,8 +11,9 @@ from fastapi.responses import FileResponse
 from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.dependency import RequireUser, get_db
-from app.core.mongodb import get_mongodb
+from app.core.security.dependencies import get_db
+from app.modules.auth.rbac import RequireUser
+from app.modules.knowledge_base.client import get_mongodb
 from app.modules.group.model import GroupMember, UserGroup
 from app.modules.knowledge_base.access import UserAccessContext
 from app.modules.knowledge_base.schema import (

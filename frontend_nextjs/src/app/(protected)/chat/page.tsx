@@ -376,6 +376,16 @@ function ChatPageContent() {
               })
             }
             flushToolCalls()
+          } else if (event.type === "browser_preview") {
+            const tc = toolCallMap.get(event.tool_call_id)
+            if (tc) {
+              toolCallMap.set(event.tool_call_id, {
+                ...tc,
+                previewImageBase64: event.image_base64,
+                previewUrl: event.url,
+              })
+            }
+            flushSync(() => flushToolCalls())
           } else if (event.type === "todos_update") {
             flushSync(() =>
               setMessages(prev =>

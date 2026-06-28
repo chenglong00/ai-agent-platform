@@ -5,8 +5,8 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.dependency import RequireAdmin, get_db
-from app.core.exceptions import ConflictError
+from app.core.security.dependencies import get_db
+from app.modules.auth.rbac import RequireAdmin
 from app.modules.user.model import UserRole
 from app.modules.user.schema import AdminCreateUserRequest, AdminUpdateUserRequest, UserResponse
 from app.modules.user.service import user_service
@@ -45,17 +45,14 @@ async def create_user(
     """Create a new user with email/password. Cannot set role to OWNER."""
     if body.role == UserRole.OWNER:
         raise HTTPException(status_code=403, detail="Cannot create owner via this endpoint")
-    try:
-        user = await user_service.create_user(
-            session,
-            body.email,
-            body.password.get_secret_value(),
-            body.display_name,
-            body.role,
-            body.is_approved,
-        )
-    except ConflictError as e:
-        raise HTTPException(status_code=409, detail=e.message)
+    user = await user_service.create_user(
+        session,
+        body.email,
+        body.password.get_secret_value(),
+        body.display_name,
+        body.role,
+        body.is_approved,
+    )
     return UserResponse.model_validate(user)
 
 
@@ -92,19 +89,16 @@ async def update_user(
     """Update user by id. Only provided fields are updated. Cannot set role to OWNER."""
     if body.role == UserRole.OWNER:
         raise HTTPException(status_code=403, detail="Cannot set role to owner via this endpoint")
-    try:
-        user = await user_service.update_user(
-            session,
-            user_id,
-            email=body.email,
-            display_name=body.display_name,
-            avatar_url=body.avatar_url,
-            role=body.role,
-            is_approved=body.is_approved,
-            is_active=body.is_active,
-        )
-    except ConflictError as e:
-        raise HTTPException(status_code=409, detail=e.message)
+    user = await user_service.update_user(
+        session,
+        user_id,
+        email=body.email,
+        display_name=body.display_name,
+        avatar_url=body.avatar_url,
+        role=body.role,
+        is_approved=body.is_approved,
+        is_active=body.is_active,
+    )
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return UserResponse.model_validate(user)

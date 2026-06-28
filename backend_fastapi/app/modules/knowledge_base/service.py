@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 from fastapi import HTTPException, UploadFile
 
 from app.core.config import settings
-from app.core.mongodb import get_mongodb
+from app.modules.knowledge_base.client import get_mongodb
 from app.modules.knowledge_base.access import (
     UserAccessContext,
     can_manage,

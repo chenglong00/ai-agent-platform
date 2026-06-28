@@ -8,7 +8,7 @@ from sqlalchemy import Column, UniqueConstraint, Index
 from sqlalchemy.orm import relationship
 from sqlmodel import SQLModel, Field, Relationship
 
-from app.core.crypto import EncryptedString
+from app.core.security.crypto import EncryptedString
 from app.utils.datetime import now_utc, datetime
 
 

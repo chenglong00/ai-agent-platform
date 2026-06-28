@@ -1,20 +1,26 @@
-"""Auth routes: credential login (token). OAuth providers are under /oauth."""
+"""Auth routes: credential login (token), current user profile. OAuth providers are under /oauth."""
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from fastapi.security import OAuth2PasswordRequestForm
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.dependency import get_db
-from app.core.exceptions import AuthenticationError
-from app.modules.auth.me_router import router as me_router
+from app.core.security.dependencies import get_db
+from app.modules.auth.rbac import RequireUser
 from app.modules.auth.schema import TokenResponse
 from app.modules.auth.service import auth_service
+from app.modules.user.schema import UserResponse
 
 router = APIRouter()
 
-router.include_router(me_router)
+
+@router.get("/me", response_model=UserResponse)
+async def get_me(
+    current_user: Annotated[UserResponse, Depends(RequireUser)],
+) -> UserResponse:
+    """Return the currently authenticated user (from Bearer token)."""
+    return current_user
 
 
 @router.post("/token", response_model=TokenResponse)
@@ -24,14 +30,11 @@ async def login(
 ):
     """Authenticate with email + password; return a JWT access token.
     OAuth2 form sends 'username' — use the user's email as username."""
-    try:
-        access_token = await auth_service.login(
-            db_session,
-            form.username,
-            form.password,
-        )
-    except AuthenticationError:
-        raise HTTPException(status_code=401, detail="Invalid email or password")
+    access_token = await auth_service.login(
+        db_session,
+        form.username,
+        form.password,
+    )
     return TokenResponse(access_token=access_token)
 
 

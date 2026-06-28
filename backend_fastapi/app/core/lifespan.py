@@ -4,33 +4,39 @@ Use for initializing and cleaning up resources (DB, caches, etc.).
 Add logic above the yield for startup, below for shutdown.
 """
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.core.database import close_engine, init_engine, ensure_initial_owner
+from app.core.db.postgres import close_engine, init_engine
 from app.core.environment import is_test_env
-from app.core.logging import align_uvicorn_with_root
-from app.core.mongodb import close_mongodb, ensure_mongodb_indexes, init_mongodb
+from app.core.observability.logging import align_uvicorn_with_root
+from app.ai.chat_agent.backend_factory import (
+    shutdown_all_sandboxes,
+    start_sandbox_cleanup_loop,
+    stop_sandbox_cleanup_loop,
+)
+from app.ai.chat_agent.playwright_pool import shutdown_all_browsers
+from app.modules.knowledge_base.client import close_mongodb, init_mongodb
+from app.modules.user.bootstrap import ensure_initial_owner
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown. Add DB connect, logging, etc. above yield; cleanup below."""
     align_uvicorn_with_root()
-    # Startup (skip DB only when APP_ENV=test/testing so tests can run without a real DB)
     if not is_test_env():
         await init_engine()
         await ensure_initial_owner()
         await init_mongodb()
-        try:
-            await ensure_mongodb_indexes()
-        except RuntimeError:
-            pass
+        start_sandbox_cleanup_loop()
 
     yield
 
-    # Shutdown
     if not is_test_env():
+        await stop_sandbox_cleanup_loop()
+        await shutdown_all_browsers()
+        await asyncio.to_thread(shutdown_all_sandboxes)
         await close_mongodb()
         await close_engine()

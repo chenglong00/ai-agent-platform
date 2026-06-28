@@ -3,7 +3,9 @@ import sqlmodel
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from sqlmodel import SQLModel
-import app.modules.models  # noqa: F401 — register all SQLModel tables
+from app.core.db.registry import register_models
+
+register_models()
 
 from alembic import context
 from app.core.config import settings

@@ -13,7 +13,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError, ConflictError
-from app.core.password import PASSWORD_ALGO, hash_password, verify_password
+from app.core.security.password import PASSWORD_ALGO, hash_password, verify_password
 from app.modules.auth.model import AuthIdentity, AuthProvider
 from app.modules.user.model import User
 from app.utils.validation import normalize_email, normalize_password
@@ -106,7 +106,10 @@ class AuthService:
         if identity:
             user = await session.get(User, identity.user_id)
             if not user or not user.is_active:
-                raise AuthenticationError()
+                raise AuthenticationError(
+                    "Account is disabled or not allowed",
+                    status_code=403,
+                )
             identity.last_login_at = datetime.now(UTC)
             if name is not None:
                 user.display_name = name
@@ -122,7 +125,10 @@ class AuthService:
         user = await self.get_user_by_email(session, email)
         if user:
             if not user.is_active:
-                raise AuthenticationError()
+                raise AuthenticationError(
+                    "Account is disabled or not allowed",
+                    status_code=403,
+                )
             identity = AuthIdentity(
                 user_id=user.id,
                 provider=provider,

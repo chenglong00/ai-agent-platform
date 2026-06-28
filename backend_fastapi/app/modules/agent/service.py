@@ -90,9 +90,12 @@ class AgentService:
         return max(limit, 0)
 
     @staticmethod
-    def _build_run_config(thread_id: str) -> dict:
+    def _build_run_config(thread_id: str, user_id: UUID) -> dict:
         return {
-            "configurable": {"thread_id": thread_id},
+            "configurable": {
+                "thread_id": thread_id,
+                "user_id": str(user_id),
+            },
             "recursion_limit": AgentService._recursion_limit(),
         }
 
@@ -196,12 +199,13 @@ class AgentService:
         agent_type: AgentType | None,
         user_text: str,
         *,
+        user_id: UUID,
         conversation_id: UUID | None = None,
         conversation_history: list[tuple[str, str]] | None = None,
     ) -> tuple[str, list[PendingToolCall]]:
         agent = get_deep_agent()
         thread_id = str(conversation_id) if conversation_id else "default"
-        config = self._build_run_config(thread_id)
+        config = self._build_run_config(thread_id, user_id)
 
         pending_before = self._pending_tool_calls(agent, config)
         if pending_before:
@@ -284,13 +288,14 @@ class AgentService:
         agent_type: AgentType | None,
         user_text: str,
         *,
+        user_id: UUID,
         conversation_id: UUID | None = None,
         conversation_history: list[tuple[str, str]] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE-ready event dicts while the agent runs."""
         agent = get_deep_agent()
         thread_id = str(conversation_id) if conversation_id else "default"
-        config = self._build_run_config(thread_id)
+        config = self._build_run_config(thread_id, user_id)
 
         pending_before = self._pending_tool_calls(agent, config)
         initial_message_count = 0
@@ -352,8 +357,17 @@ class AgentService:
                         "started_at": started_at,
                     })
 
-                    async for _ in tool_call.output_deltas:
-                        pass
+                    async for delta in tool_call.output_deltas:
+                        if (
+                            isinstance(delta, dict)
+                            and delta.get("type") == "screenshot"
+                        ):
+                            await outbound.put({
+                                "type": "browser_preview",
+                                "tool_call_id": call_id,
+                                "url": str(delta.get("url") or ""),
+                                "image_base64": str(delta.get("image_base64") or ""),
+                            })
 
                     completed_at = int(time.time() * 1000)
                     if tool_call.error:

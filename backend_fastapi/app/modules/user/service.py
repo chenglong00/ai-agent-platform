@@ -8,7 +8,9 @@ from sqlmodel import select
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.core.exceptions import ConflictError
-from app.core.password import PASSWORD_ALGO, hash_password
+from app.core.security.password import PASSWORD_ALGO, hash_password
+from app.ai.chat_agent.backend_factory import release_user_sandbox
+from app.ai.chat_agent.playwright_pool import release_user_browser
 from app.modules.auth.model import AuthIdentity, AuthProvider
 from app.modules.user.model import User, UserRole
 from app.utils.validation import normalize_email, normalize_password
@@ -127,6 +129,9 @@ class UserService:
             user.is_approved = is_approved
         if is_active is not None:
             user.is_active = is_active
+            if not is_active:
+                release_user_sandbox(str(user_id))
+                await release_user_browser(str(user_id))
         user.updated_at = datetime.now(timezone.utc)
         session.add(user)
         await session.commit()
@@ -138,6 +143,8 @@ class UserService:
         user = await session.get(User, user_id)
         if not user:
             return False
+        release_user_sandbox(str(user_id))
+        await release_user_browser(str(user_id))
         await session.delete(user)
         await session.commit()
         return True

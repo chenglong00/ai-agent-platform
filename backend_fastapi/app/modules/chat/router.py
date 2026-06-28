@@ -12,7 +12,8 @@ from fastapi.responses import StreamingResponse
 from google.auth.exceptions import DefaultCredentialsError
 from sqlmodel.ext.asyncio.session import AsyncSession
 
-from app.core.dependency import RequireUser, get_db
+from app.core.security.dependencies import get_db
+from app.modules.auth.rbac import RequireUser
 from app.modules.agent.service import agent_service
 from app.modules.chat.model import BlockType, MessageRole
 from app.modules.chat.schema import (
@@ -171,6 +172,7 @@ async def send_message(
         assistant_text, pending_tool_calls = await agent_service.reply(
             body.agent_type,
             body.text,
+            user_id=current_user.id,
             conversation_id=conversation_id,
             conversation_history=conversation_history,
         )
@@ -238,6 +240,7 @@ async def stream_message(
             async for chunk in agent_service.stream_reply(
                 body.agent_type,
                 body.text,
+                user_id=current_user.id,
                 conversation_id=conversation_id,
                 conversation_history=conversation_history,
             ):
