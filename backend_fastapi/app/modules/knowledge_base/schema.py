@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, Field, field_validator
 
 ChunkingStrategyId = Literal["fixed_size", "recursive", "by_page"]
+ParsingStrategyId = Literal["pypdf", "gemini"]
 DocumentStatus = Literal["uploaded", "ingested", "failed"]
 EmbeddingModelId = Literal["text-embedding-004", "text-embedding-005", "textembedding-gecko@003"]
 Visibility = Literal["private", "organization", "group", "role"]
@@ -22,6 +23,12 @@ class ChunkingStrategyOption(BaseModel):
     supports_chunk_overlap: bool = True
     default_chunk_size: int = 1000
     default_chunk_overlap: int = 200
+
+
+class ParsingStrategyOption(BaseModel):
+    id: ParsingStrategyId
+    label: str
+    description: str
 
 
 class EmbeddingModelOption(BaseModel):
@@ -75,6 +82,7 @@ class DocumentSettingsRequest(BaseModel):
 
 
 class KnowledgeBaseOptionsResponse(BaseModel):
+    parsing_strategies: list[ParsingStrategyOption]
     chunking_strategies: list[ChunkingStrategyOption]
     embedding_models: list[EmbeddingModelOption]
     access_visibility_options: list[AccessVisibilityOption]
@@ -95,6 +103,7 @@ class DocumentUploadResponse(BaseModel):
     char_count: int
     pages: list[PagePreview]
     status: DocumentStatus
+    parsing_strategy: ParsingStrategyId
     created_at: datetime
     meta: DocumentMetadata
     access: DocumentAccessControl
@@ -106,6 +115,7 @@ class DocumentSummary(BaseModel):
     content_type: str
     page_count: int
     status: DocumentStatus
+    parsing_strategy: ParsingStrategyId | None = None
     chunk_count: int | None = None
     chunking_strategy: ChunkingStrategyId | None = None
     embedding_model: EmbeddingModelId | None = None
@@ -148,6 +158,11 @@ class IngestDocumentResponse(BaseModel):
     chunking_strategy: ChunkingStrategyId
     embedding_model: EmbeddingModelId
     ingested_at: datetime
+
+
+class DeleteDocumentResponse(BaseModel):
+    id: UUID
+    deleted: bool = True
 
 
 class DocumentDetailResponse(DocumentSummary):

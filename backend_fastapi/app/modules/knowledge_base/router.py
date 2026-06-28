@@ -15,8 +15,9 @@ from app.core.security.dependencies import get_db
 from app.modules.auth.rbac import RequireUser
 from app.modules.knowledge_base.client import get_mongodb
 from app.modules.group.model import GroupMember, UserGroup
-from app.modules.knowledge_base.access import UserAccessContext
+from app.modules.knowledge_base.access import UserAccessContext, build_user_access_context
 from app.modules.knowledge_base.schema import (
+    DeleteDocumentResponse,
     DocumentDetailResponse,
     DocumentSettingsRequest,
     DocumentSummary,
@@ -25,6 +26,7 @@ from app.modules.knowledge_base.schema import (
     IngestDocumentRequest,
     IngestDocumentResponse,
     KnowledgeBaseOptionsResponse,
+    ParsingStrategyId,
     PreviewChunksRequest,
     PreviewChunksResponse,
 )
@@ -50,11 +52,7 @@ async def _access_context(
     session: AsyncSession,
     user: UserResponse,
 ) -> UserAccessContext:
-    result = await session.exec(
-        select(GroupMember.group_id).where(GroupMember.user_id == user.id),
-    )
-    group_ids = tuple(result.all())
-    return UserAccessContext(user_id=user.id, role=user.role, group_ids=group_ids)
+    return await build_user_access_context(session, user)
 
 
 async def _user_groups(session: AsyncSession, user: UserResponse) -> list[GroupOption]:
@@ -111,6 +109,17 @@ async def update_document_settings(
     return await knowledge_base_service.update_document_settings(ctx, document_id, body)
 
 
+@router.delete("/documents/{document_id}", response_model=DeleteDocumentResponse)
+async def delete_document(
+    document_id: UUID,
+    session: Annotated[AsyncSession, Depends(get_db)],
+    current_user: Annotated[UserResponse, Depends(RequireUser)],
+) -> DeleteDocumentResponse:
+    _require_mongodb()
+    ctx = await _access_context(session, current_user)
+    return await knowledge_base_service.delete_document(ctx, document_id)
+
+
 @router.get("/documents/{document_id}/file")
 async def get_document_file(
     document_id: UUID,
@@ -134,6 +143,10 @@ async def upload_document(
     current_user: Annotated[UserResponse, Depends(RequireUser)],
     file: Annotated[UploadFile, File(description="PDF document to ingest")],
     settings: Annotated[str | None, Form(description="JSON DocumentSettingsRequest")] = None,
+    parsing_strategy: Annotated[
+        ParsingStrategyId,
+        Form(description="PDF text extraction: pypdf (fast) or gemini (Vertex AI)"),
+    ] = "pypdf",
 ) -> DocumentUploadResponse:
     _require_mongodb()
     ctx = await _access_context(session, current_user)
@@ -141,6 +154,7 @@ async def upload_document(
         ctx,
         file,
         settings_json=settings,
+        parsing_strategy=parsing_strategy,
     )
 
 

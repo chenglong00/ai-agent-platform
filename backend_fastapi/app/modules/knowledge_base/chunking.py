@@ -8,7 +8,7 @@ from pathlib import Path
 from langchain_text_splitters import CharacterTextSplitter, RecursiveCharacterTextSplitter
 from pypdf import PdfReader
 
-from app.modules.knowledge_base.schema import ChunkingStrategyId, PagePreview
+from app.modules.knowledge_base.schema import ChunkingStrategyId, PagePreview, ParsingStrategyId
 
 
 @dataclass
@@ -25,6 +25,17 @@ def extract_pdf_pages(path: Path) -> list[PagePreview]:
         text = (page.extract_text() or "").strip()
         pages.append(PagePreview(page=i, text=text))
     return pages
+
+
+async def extract_pdf_pages_async(
+    path: Path,
+    strategy: ParsingStrategyId = "pypdf",
+) -> list[PagePreview]:
+    if strategy == "gemini":
+        from app.modules.knowledge_base.gemini_extraction import extract_pdf_pages_gemini
+
+        return await extract_pdf_pages_gemini(path)
+    return extract_pdf_pages(path)
 
 
 def chunk_pages(

@@ -65,3 +65,15 @@ async def embed_texts(model_id: EmbeddingModelId, texts: Sequence[str]) -> list[
         logger.exception("embedding_failed model=%s count=%s", model_id, len(texts))
         raise
     return vectors
+
+
+async def embed_query(model_id: EmbeddingModelId, text: str) -> list[float]:
+    query = text.strip()
+    if not query:
+        return []
+    embedder = get_embeddings(model_id)
+    try:
+        return await embedder.aembed_query(query)
+    except Exception:
+        logger.exception("embed_query_failed model=%s", model_id)
+        raise

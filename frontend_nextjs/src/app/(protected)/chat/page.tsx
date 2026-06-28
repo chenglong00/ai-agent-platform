@@ -113,6 +113,7 @@ function ChatPageContent() {
   const [sessionReady, setSessionReady] = useState(false)
   const [initError, setInitError] = useState<string | null>(null)
   const [authToken, setAuthToken] = useState("")
+  const [sending, setSending] = useState(false)
   const [conversationTitle, setConversationTitle] = useState("")
   const [titleEditing, setTitleEditing] = useState(false)
   const [titleDraft, setTitleDraft] = useState("")

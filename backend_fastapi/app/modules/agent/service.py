@@ -90,12 +90,23 @@ class AgentService:
         return max(limit, 0)
 
     @staticmethod
-    def _build_run_config(thread_id: str, user_id: UUID) -> dict:
+    def _build_run_config(
+        thread_id: str,
+        user_id: UUID,
+        *,
+        user_role: str | None = None,
+        group_ids: list[UUID] | None = None,
+    ) -> dict:
+        configurable: dict[str, Any] = {
+            "thread_id": thread_id,
+            "user_id": str(user_id),
+        }
+        if user_role:
+            configurable["user_role"] = user_role
+        if group_ids:
+            configurable["group_ids"] = [str(group_id) for group_id in group_ids]
         return {
-            "configurable": {
-                "thread_id": thread_id,
-                "user_id": str(user_id),
-            },
+            "configurable": configurable,
             "recursion_limit": AgentService._recursion_limit(),
         }
 
@@ -202,10 +213,17 @@ class AgentService:
         user_id: UUID,
         conversation_id: UUID | None = None,
         conversation_history: list[tuple[str, str]] | None = None,
+        user_role: str | None = None,
+        group_ids: list[UUID] | None = None,
     ) -> tuple[str, list[PendingToolCall]]:
         agent = get_deep_agent()
         thread_id = str(conversation_id) if conversation_id else "default"
-        config = self._build_run_config(thread_id, user_id)
+        config = self._build_run_config(
+            thread_id,
+            user_id,
+            user_role=user_role,
+            group_ids=group_ids,
+        )
 
         pending_before = self._pending_tool_calls(agent, config)
         if pending_before:
@@ -291,11 +309,18 @@ class AgentService:
         user_id: UUID,
         conversation_id: UUID | None = None,
         conversation_history: list[tuple[str, str]] | None = None,
+        user_role: str | None = None,
+        group_ids: list[UUID] | None = None,
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Yield SSE-ready event dicts while the agent runs."""
         agent = get_deep_agent()
         thread_id = str(conversation_id) if conversation_id else "default"
-        config = self._build_run_config(thread_id, user_id)
+        config = self._build_run_config(
+            thread_id,
+            user_id,
+            user_role=user_role,
+            group_ids=group_ids,
+        )
 
         pending_before = self._pending_tool_calls(agent, config)
         initial_message_count = 0

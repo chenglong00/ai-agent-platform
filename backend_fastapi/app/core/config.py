@@ -55,6 +55,12 @@ class Settings(BaseSettings):
 
     MONGODB_URI: str = ""
     KNOWLEDGE_BASE_UPLOAD_DIR: Path = Path("data/knowledge_base")
+    KNOWLEDGE_BASE_RAG_ENABLED: bool = True
+    KNOWLEDGE_BASE_RAG_TOP_K: int = 5
+    KNOWLEDGE_BASE_RAG_MIN_SCORE: float = 0.45
+    KNOWLEDGE_BASE_RAG_MAX_CHUNKS_SCAN: int = 2000
+    KNOWLEDGE_BASE_GEMINI_PARSING_ENABLED: bool = True
+    KNOWLEDGE_BASE_GEMINI_PARSING_BATCH_PAGES: int = 10
 
     # Initial owner (optional): set env to create an OWNER user and credentials identity on first run
     INITIAL_OWNER_EMAIL: str = ""

@@ -25,8 +25,9 @@ from app.modules.knowledge_base.access import (
     parse_meta,
     validate_access_for_user,
 )
-from app.modules.knowledge_base.chunking import chunk_pages, extract_pdf_pages
-from app.modules.knowledge_base.embeddings import EMBEDDING_MODELS, embed_texts
+from app.modules.knowledge_base.chunking import chunk_pages, extract_pdf_pages_async
+from app.modules.knowledge_base.embeddings import EMBEDDING_MODELS, embed_query, embed_texts
+from app.modules.knowledge_base.search import KnowledgeSearchHit, rank_chunks
 from app.modules.knowledge_base.schema import (
     AccessVisibilityOption,
     ChunkingStrategyId,
@@ -39,11 +40,14 @@ from app.modules.knowledge_base.schema import (
     DocumentStatus,
     DocumentSummary,
     DocumentUploadResponse,
+    DeleteDocumentResponse,
     EmbeddingModelId,
     GroupOption,
     IngestDocumentResponse,
     KnowledgeBaseOptionsResponse,
     PagePreview,
+    ParsingStrategyId,
+    ParsingStrategyOption,
     PreviewChunksResponse,
     RoleOption,
 )
@@ -105,6 +109,19 @@ ROLE_OPTIONS: list[RoleOption] = [
     RoleOption(id="MEMBER", label="Member"),
 ]
 
+PARSING_STRATEGIES: list[ParsingStrategyOption] = [
+    ParsingStrategyOption(
+        id="pypdf",
+        label="PyPDF (fast)",
+        description="Local text extraction — best for digital PDFs with selectable text.",
+    ),
+    ParsingStrategyOption(
+        id="gemini",
+        label="Gemini (Vertex AI)",
+        description="LLM parsing — better for scans, tables, and complex layouts (slower, uses Vertex AI).",
+    ),
+]
+
 ALLOWED_CONTENT_TYPES = {"application/pdf"}
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 PREVIEW_CHUNK_LIMIT = 12
@@ -112,7 +129,13 @@ PREVIEW_CHUNK_LIMIT = 12
 
 class KnowledgeBaseService:
     def options(self, groups: list[GroupOption] | None = None) -> KnowledgeBaseOptionsResponse:
+        parsing = [
+            s
+            for s in PARSING_STRATEGIES
+            if s.id != "gemini" or settings.KNOWLEDGE_BASE_GEMINI_PARSING_ENABLED
+        ]
         return KnowledgeBaseOptionsResponse(
+            parsing_strategies=parsing,
             chunking_strategies=CHUNKING_STRATEGIES,
             embedding_models=EMBEDDING_MODELS,
             access_visibility_options=ACCESS_VISIBILITY_OPTIONS,
@@ -163,6 +186,7 @@ class KnowledgeBaseService:
             content_type=doc["content_type"],
             page_count=doc.get("page_count", 0),
             status=doc["status"],
+            parsing_strategy=doc.get("parsing_strategy"),
             chunk_count=doc.get("chunk_count"),
             chunking_strategy=doc.get("chunking_strategy"),
             embedding_model=doc.get("embedding_model"),
@@ -222,7 +246,10 @@ class KnowledgeBaseService:
         file: UploadFile,
         *,
         settings_json: str | None = None,
+        parsing_strategy: ParsingStrategyId = "pypdf",
     ) -> DocumentUploadResponse:
+        if parsing_strategy == "gemini" and not settings.KNOWLEDGE_BASE_GEMINI_PARSING_ENABLED:
+            raise HTTPException(status_code=400, detail="Gemini PDF parsing is disabled.")
         if file.content_type not in ALLOWED_CONTENT_TYPES:
             raise HTTPException(status_code=400, detail="Only PDF uploads are supported for now.")
 
@@ -245,18 +272,27 @@ class KnowledgeBaseService:
         path.write_bytes(raw)
 
         try:
-            pages = extract_pdf_pages(path)
+            pages = await extract_pdf_pages_async(path, parsing_strategy)
+        except ValueError as exc:
+            path.unlink(missing_ok=True)
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
         except Exception as exc:
             path.unlink(missing_ok=True)
-            logger.exception("pdf_extract_failed document_id=%s", document_id)
+            logger.exception(
+                "pdf_extract_failed document_id=%s strategy=%s",
+                document_id,
+                parsing_strategy,
+            )
             raise HTTPException(status_code=400, detail=f"Could not read PDF: {exc}") from exc
 
         if not any(p.text.strip() for p in pages):
             path.unlink(missing_ok=True)
-            raise HTTPException(
-                status_code=400,
-                detail="PDF has no extractable text. Scanned/image-only PDFs are not supported yet.",
+            detail = (
+                "Gemini could not extract readable text from this PDF."
+                if parsing_strategy == "gemini"
+                else "PDF has no extractable text. Try Gemini parsing for scanned PDFs."
             )
+            raise HTTPException(status_code=400, detail=detail)
 
         created_at = datetime.now(UTC)
         char_count = sum(len(p.text) for p in pages)
@@ -270,6 +306,7 @@ class KnowledgeBaseService:
             "char_count": char_count,
             "pages": [p.model_dump() for p in pages],
             "status": "uploaded",
+            "parsing_strategy": parsing_strategy,
             "chunk_count": None,
             "chunking_strategy": None,
             "embedding_model": None,
@@ -291,6 +328,7 @@ class KnowledgeBaseService:
             char_count=char_count,
             pages=pages,
             status="uploaded",
+            parsing_strategy=parsing_strategy,
             created_at=created_at,
             meta=meta,
             access=access,
@@ -327,6 +365,26 @@ class KnowledgeBaseService:
             await db.kb_documents.update_one({"_id": doc["_id"]}, {"$set": updates})
 
         return await self.get_document(ctx, document_id)
+
+    async def delete_document(
+        self,
+        ctx: UserAccessContext,
+        document_id: UUID,
+    ) -> DeleteDocumentResponse:
+        doc = await self._get_document_for_manage(ctx, document_id)
+        doc_id = doc["_id"]
+        db = get_mongodb()
+        await db.kb_chunks.delete_many({"document_id": doc_id})
+        result = await db.kb_documents.delete_one({"_id": doc_id})
+        if result.deleted_count == 0:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        file_path = doc.get("file_path")
+        if file_path:
+            Path(file_path).unlink(missing_ok=True)
+
+        logger.info("kb_document_deleted id=%s owner=%s", doc_id, ctx.user_id)
+        return DeleteDocumentResponse(id=UUID(doc_id))
 
     async def get_file_path(self, ctx: UserAccessContext, document_id: UUID) -> Path:
         doc = await self._get_document_for_read(ctx, document_id)
@@ -494,6 +552,77 @@ class KnowledgeBaseService:
             chunking_strategy=chunking_strategy,
             embedding_model=embedding_model,
             ingested_at=ingested_at,
+        )
+
+    async def _primary_embedding_model(self, access_filter: dict[str, Any]) -> EmbeddingModelId | None:
+        db = get_mongodb()
+        pipeline = [
+            {"$match": access_filter},
+            {"$group": {"_id": "$embedding_model", "count": {"$sum": 1}}},
+            {"$sort": {"count": -1}},
+            {"$limit": 1},
+        ]
+        rows = await db.kb_chunks.aggregate(pipeline).to_list(length=1)
+        if not rows:
+            return None
+        model_id = rows[0].get("_id")
+        if not model_id:
+            return None
+        return str(model_id)
+
+    async def search(
+        self,
+        ctx: UserAccessContext,
+        query: str,
+        *,
+        top_k: int | None = None,
+        min_score: float | None = None,
+    ) -> list[KnowledgeSearchHit]:
+        q = query.strip()
+        if not q:
+            return []
+
+        db = get_mongodb()
+        access_filter = list_filter(ctx)
+        model_id = await self._primary_embedding_model(access_filter)
+        if model_id is None:
+            return []
+
+        limit = top_k if top_k is not None else settings.KNOWLEDGE_BASE_RAG_TOP_K
+        score_floor = (
+            min_score if min_score is not None else settings.KNOWLEDGE_BASE_RAG_MIN_SCORE
+        )
+        scan_cap = settings.KNOWLEDGE_BASE_RAG_MAX_CHUNKS_SCAN
+
+        try:
+            query_vector = await embed_query(model_id, q)
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        except Exception as exc:
+            logger.exception("knowledge_base_search_embed_failed")
+            raise HTTPException(status_code=503, detail=f"Embedding failed: {exc}") from exc
+
+        if not query_vector:
+            return []
+
+        chunk_filter = {**access_filter, "embedding_model": model_id}
+        cursor = db.kb_chunks.find(
+            chunk_filter,
+            {
+                "document_id": 1,
+                "index": 1,
+                "page": 1,
+                "text": 1,
+                "embedding": 1,
+                "meta": 1,
+            },
+        ).limit(scan_cap)
+        chunks = await cursor.to_list(length=scan_cap)
+        return rank_chunks(
+            query_vector,
+            chunks,
+            top_k=max(limit, 1),
+            min_score=score_floor,
         )
 
 

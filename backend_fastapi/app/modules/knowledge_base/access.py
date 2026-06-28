@@ -6,8 +6,13 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+from sqlmodel import select
+from sqlmodel.ext.asyncio.session import AsyncSession
+
+from app.modules.group.model import GroupMember
 from app.modules.knowledge_base.schema import DocumentAccessControl, DocumentMetadata, Visibility
 from app.modules.user.model import UserRole
+from app.modules.user.schema import UserResponse
 
 
 @dataclass(frozen=True)
@@ -91,6 +96,17 @@ def list_filter(ctx: UserAccessContext) -> dict[str, Any]:
         "access.allowed_roles": ctx.role.value,
     })
     return {"$or": clauses}
+
+
+async def build_user_access_context(
+    session: AsyncSession,
+    user: UserResponse,
+) -> UserAccessContext:
+    result = await session.exec(
+        select(GroupMember.group_id).where(GroupMember.user_id == user.id),
+    )
+    group_ids = tuple(result.all())
+    return UserAccessContext(user_id=user.id, role=user.role, group_ids=group_ids)
 
 
 def validate_access_for_user(

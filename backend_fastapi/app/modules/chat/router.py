@@ -28,6 +28,7 @@ from app.modules.chat.schema import (
 )
 from app.modules.chat.service import chat_service
 from app.modules.chat.browser_live import router as browser_live_router
+from app.modules.knowledge_base.access import build_user_access_context
 from app.modules.user.schema import UserResponse
 
 logger = logging.getLogger(__name__)
@@ -169,6 +170,7 @@ async def send_message(
         MessageRole.USER,
         text=body.text,
     )
+    kb_ctx = await build_user_access_context(session, current_user)
 
     try:
         assistant_text, pending_tool_calls = await agent_service.reply(
@@ -177,6 +179,8 @@ async def send_message(
             user_id=current_user.id,
             conversation_id=conversation_id,
             conversation_history=conversation_history,
+            user_role=kb_ctx.role.value,
+            group_ids=list(kb_ctx.group_ids),
         )
     except DefaultCredentialsError:
         logger.exception(
@@ -231,6 +235,7 @@ async def stream_message(
         MessageRole.USER,
         text=body.text,
     )
+    kb_ctx = await build_user_access_context(session, current_user)
 
     async def generate():
         yield _sse({"type": "start", "user_message_id": str(user_msg.id)})
@@ -245,6 +250,8 @@ async def stream_message(
                 user_id=current_user.id,
                 conversation_id=conversation_id,
                 conversation_history=conversation_history,
+                user_role=kb_ctx.role.value,
+                group_ids=list(kb_ctx.group_ids),
             ):
                 if chunk["type"] == "done":
                     full_text = chunk.get("full_text", "")

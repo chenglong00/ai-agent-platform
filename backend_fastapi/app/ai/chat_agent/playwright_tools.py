@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import re
 from collections.abc import Awaitable, Callable
 from typing import Any
 from urllib.parse import urlparse
@@ -42,6 +43,29 @@ def _truncate(text: str, limit: int | None = None) -> str:
 def _is_closed_error(exc: Exception) -> bool:
     message = str(exc).lower()
     return "closed" in message or "target page" in message
+
+
+_JQUERY_CONTAINS_RE = re.compile(
+    r":contains\(\s*(['\"])(.*?)\1\s*\)",
+    re.IGNORECASE,
+)
+
+
+def _normalize_selector(selector: str) -> str:
+    """Map jQuery-style :contains() to Playwright's :has-text()."""
+    if ":contains(" not in selector.lower():
+        return selector
+    return _JQUERY_CONTAINS_RE.sub(r':has-text("\2")', selector)
+
+
+def _locator(page, selector: str):
+    """Resolve a Playwright locator from CSS or Playwright selector syntax."""
+    sel = selector.strip()
+    if sel.lower().startswith("text="):
+        return page.locator(sel).first
+    if sel.lower().startswith("role="):
+        return page.locator(sel).first
+    return page.locator(_normalize_selector(sel)).first
 
 
 async def _page_state_summary(page) -> str:
@@ -120,7 +144,7 @@ async def browser_read(runtime: ToolRuntime) -> str:
 
 @tool
 async def browser_click(selector: str, runtime: ToolRuntime) -> str:
-    """Click an element on the page using a CSS selector."""
+    """Click an element using standard CSS or Playwright selectors (e.g. #id, .class, a:has-text('Sign in')). Do not use jQuery :contains(); use browser_click_text for visible label text instead."""
     if not settings.BROWSER_PLAYWRIGHT_ENABLED:
         return _disabled()
 
@@ -131,10 +155,53 @@ async def browser_click(selector: str, runtime: ToolRuntime) -> str:
     user_id = get_user_id_from_run(runtime)
 
     async def action(page) -> str:
-        await page.locator(sel).first.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
-        return f"Clicked `{sel}`.\n{await _page_state_summary(page)}"
+        locator = _locator(page, sel)
+        await locator.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
+        used = _normalize_selector(sel) if ":contains(" in sel.lower() else sel
+        return f"Clicked `{used}`.\n{await _page_state_summary(page)}"
 
     return await _run_browser_action(user_id, action, log_label="browser_click")
+
+
+@tool
+async def browser_click_text(text: str, runtime: ToolRuntime, exact: bool = False) -> str:
+    """Click the first visible element that contains this text (links, buttons, menu items). Use when you know the label but not the CSS selector."""
+    if not settings.BROWSER_PLAYWRIGHT_ENABLED:
+        return _disabled()
+
+    label = text.strip()
+    if not label:
+        return "Text is required."
+
+    user_id = get_user_id_from_run(runtime)
+
+    async def action(page) -> str:
+        locator = page.get_by_text(label, exact=exact).first
+        await locator.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
+        return f"Clicked text `{label}`.\n{await _page_state_summary(page)}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_click_text")
+
+
+@tool
+async def browser_click_role(role: str, name: str, runtime: ToolRuntime) -> str:
+    """Click by accessibility role and name (e.g. role=link, name=New chat). Prefer for buttons and links when you know the accessible name."""
+    if not settings.BROWSER_PLAYWRIGHT_ENABLED:
+        return _disabled()
+
+    role_name = role.strip().lower()
+    accessible_name = name.strip()
+    if not role_name or not accessible_name:
+        return "Both role and name are required."
+
+    user_id = get_user_id_from_run(runtime)
+
+    async def action(page) -> str:
+        locator = page.get_by_role(role_name, name=accessible_name).first
+        await locator.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
+        return f"Clicked {role_name} `{accessible_name}`.\n{await _page_state_summary(page)}"
+
+    return await _run_browser_action(user_id, action, log_label="browser_click_role")
 
 
 @tool
@@ -155,7 +222,7 @@ async def browser_type(
     user_id = get_user_id_from_run(runtime)
 
     async def action(page) -> str:
-        locator = page.locator(sel).first
+        locator = _locator(page, sel)
         await locator.fill(text, timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
         if press_enter:
             await locator.press("Enter")
@@ -211,6 +278,8 @@ PLAYWRIGHT_BROWSER_TOOLS = [
     browser_goto,
     browser_read,
     browser_click,
+    browser_click_text,
+    browser_click_role,
     browser_type,
     browser_press,
     browser_screenshot,

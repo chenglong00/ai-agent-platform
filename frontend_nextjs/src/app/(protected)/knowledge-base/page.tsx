@@ -5,6 +5,7 @@ import {
   DatabaseIcon,
   FileTextIcon,
   Loader2Icon,
+  Trash2Icon,
   UploadCloudIcon,
 } from "lucide-react"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
@@ -54,6 +55,7 @@ import {
   fetchKnowledgeBaseStoredChunks,
   defaultDocumentAccess,
   defaultDocumentMetadata,
+  deleteKnowledgeBaseDocument,
   ingestKnowledgeBaseDocument,
   previewKnowledgeBaseChunks,
   updateKnowledgeBaseDocumentSettings,
@@ -66,6 +68,7 @@ import {
   type DocumentUploadResult,
   type EmbeddingModelId,
   type KnowledgeBaseOptions,
+  type ParsingStrategyId,
   type PreviewChunksResult,
   type Visibility,
 } from "@/lib/knowledge-base"
@@ -106,6 +109,7 @@ export default function KnowledgeBasePage() {
   const [activeSummary, setActiveSummary] = useState<DocumentSummary | null>(null)
   const [pdfUrl, setPdfUrl] = useState<string | null>(null)
   const [chunkStrategy, setChunkStrategy] = useState<ChunkingStrategyId>("recursive")
+  const [parsingStrategy, setParsingStrategy] = useState<ParsingStrategyId>("pypdf")
   const [embeddingModel, setEmbeddingModel] =
     useState<EmbeddingModelId>("text-embedding-004")
   const [chunkSize, setChunkSize] = useState(1000)
@@ -117,6 +121,7 @@ export default function KnowledgeBasePage() {
   const [uploading, setUploading] = useState(false)
   const [previewing, setPreviewing] = useState(false)
   const [ingesting, setIngesting] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
   const [libraryFilter, setLibraryFilter] = useState<"all" | "pending" | "indexed">("all")
@@ -172,6 +177,12 @@ export default function KnowledgeBasePage() {
       ])
       setOptions(opts)
       setDocuments(docs)
+      const defaultParsing =
+        opts.parsing_strategies.find(s => s.id === "pypdf") ??
+        opts.parsing_strategies[0]
+      if (defaultParsing) {
+        setParsingStrategy(defaultParsing.id)
+      }
       const defaultStrategy =
         opts.chunking_strategies.find(s => s.id === "recursive") ??
         opts.chunking_strategies[0]
@@ -265,6 +276,7 @@ export default function KnowledgeBasePage() {
         content_type: detail.content_type,
         page_count: detail.page_count,
         status: detail.status,
+        parsing_strategy: detail.parsing_strategy,
         chunk_count: detail.chunk_count,
         chunking_strategy: detail.chunking_strategy,
         embedding_model: detail.embedding_model,
@@ -277,6 +289,7 @@ export default function KnowledgeBasePage() {
       applyDocumentSettings(detail.meta, detail.access, detail.can_manage)
       await loadPdfPreview(doc.id)
       if (detail.chunking_strategy) setChunkStrategy(detail.chunking_strategy)
+      if (detail.parsing_strategy) setParsingStrategy(detail.parsing_strategy)
       if (detail.embedding_model) setEmbeddingModel(detail.embedding_model)
       if (detail.status === "ingested") {
         const stored = await fetchKnowledgeBaseStoredChunks(token, doc.id)
@@ -302,7 +315,12 @@ export default function KnowledgeBasePage() {
     setActiveSummary(null)
     try {
       const settings = buildSettingsPayload()
-      const result = await uploadKnowledgeBaseDocument(token, file, settings)
+      const result = await uploadKnowledgeBaseDocument(
+        token,
+        file,
+        settings,
+        parsingStrategy,
+      )
       setActiveDoc(result)
       setActiveSummary({
         id: result.id,
@@ -310,6 +328,7 @@ export default function KnowledgeBasePage() {
         content_type: result.content_type,
         page_count: result.page_count,
         status: result.status,
+        parsing_strategy: result.parsing_strategy,
         chunk_count: null,
         chunking_strategy: null,
         embedding_model: null,
@@ -416,6 +435,46 @@ export default function KnowledgeBasePage() {
     }
   }
 
+  const clearActiveDocument = useCallback(() => {
+    setActiveDoc(null)
+    setActiveSummary(null)
+    setChunkPreview(null)
+    setStoredChunks(null)
+    setPdfUrl(prev => {
+      if (prev) URL.revokeObjectURL(prev)
+      return null
+    })
+  }, [])
+
+  const handleDeleteDocument = async (doc: DocumentSummary) => {
+    if (!doc.is_owner) return
+    const label = doc.meta.title || doc.filename
+    if (
+      !window.confirm(
+        `Delete "${label}"? This removes the PDF, extracted text, and indexed chunks permanently.`,
+      )
+    ) {
+      return
+    }
+    const token = getToken()
+    if (!token) return
+    setDeleting(true)
+    setError(null)
+    setSuccess(null)
+    try {
+      await deleteKnowledgeBaseDocument(token, doc.id)
+      if (activeDoc?.id === doc.id) {
+        clearActiveDocument()
+      }
+      await refreshDocuments()
+      setSuccess(`Deleted "${label}".`)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not delete document")
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   const chunksToShow = storedChunks ?? chunkPreview
   const isIndexed = activeSummary?.status === "ingested"
 
@@ -479,7 +538,7 @@ export default function KnowledgeBasePage() {
                         <TableHead className="hidden md:table-cell">Strategy</TableHead>
                         <TableHead className="hidden lg:table-cell">Model</TableHead>
                         <TableHead className="hidden md:table-cell">Indexed</TableHead>
-                        <TableHead className="w-[80px]" />
+                        <TableHead className="w-[120px]" />
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -515,14 +574,28 @@ export default function KnowledgeBasePage() {
                             {formatDate(doc.ingested_at)}
                           </TableCell>
                           <TableCell>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              className="h-7 px-2"
-                              onClick={() => void openDocument(doc)}
-                            >
-                              Open
-                            </Button>
+                            <div className="flex items-center justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-7 px-2"
+                                onClick={() => void openDocument(doc)}
+                              >
+                                Open
+                              </Button>
+                              {doc.is_owner ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                  disabled={deleting}
+                                  aria-label={`Delete ${doc.meta.title || doc.filename}`}
+                                  onClick={() => void handleDeleteDocument(doc)}
+                                >
+                                  <Trash2Icon className="size-4" />
+                                </Button>
+                              ) : null}
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -541,6 +614,32 @@ export default function KnowledgeBasePage() {
                   <CardDescription>PDF documents only (max 25 MB)</CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-3">
+                  <div className="space-y-2">
+                    <Label>Text extraction</Label>
+                    <Select
+                      value={parsingStrategy}
+                      disabled={uploading}
+                      onValueChange={value =>
+                        setParsingStrategy(value as ParsingStrategyId)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Choose parser" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {options?.parsing_strategies.map(s => (
+                          <SelectItem key={s.id} value={s.id}>
+                            {s.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      {options?.parsing_strategies.find(s => s.id === parsingStrategy)
+                        ?.description ??
+                        "PyPDF for digital PDFs; Gemini for scans and complex layouts."}
+                    </p>
+                  </div>
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -574,7 +673,11 @@ export default function KnowledgeBasePage() {
                       <UploadCloudIcon className="size-8 text-muted-foreground" />
                     )}
                     <span className="text-sm font-medium">
-                      {uploading ? "Uploading…" : "Drop PDF or click to browse"}
+                      {uploading
+                        ? parsingStrategy === "gemini"
+                          ? "Extracting with Gemini…"
+                          : "Uploading…"
+                        : "Drop PDF or click to browse"}
                     </span>
                   </button>
                   {activeDoc ? (
@@ -587,6 +690,9 @@ export default function KnowledgeBasePage() {
                       </div>
                       <p className="text-muted-foreground">
                         {activeDoc.page_count} pages · {activeDoc.char_count.toLocaleString()} chars
+                        {activeSummary?.parsing_strategy
+                          ? ` · ${formatStrategy(activeSummary.parsing_strategy)}`
+                          : ""}
                       </p>
                     </div>
                   ) : null}
@@ -869,6 +975,29 @@ export default function KnowledgeBasePage() {
                       </div>
 
                       <div className="flex flex-col gap-2 pt-1">
+                        {canManage && activeDoc ? (
+                          <Button
+                            variant="outline"
+                            className="border-destructive/40 text-destructive hover:bg-destructive/5 hover:text-destructive"
+                            disabled={deleting}
+                            onClick={() =>
+                              activeSummary &&
+                              void handleDeleteDocument(activeSummary)
+                            }
+                          >
+                            {deleting ? (
+                              <>
+                                <Loader2Icon className="size-4 animate-spin" />
+                                Deleting…
+                              </>
+                            ) : (
+                              <>
+                                <Trash2Icon className="size-4" />
+                                Delete document
+                              </>
+                            )}
+                          </Button>
+                        ) : null}
                         <Button
                           variant="outline"
                           disabled={!activeDoc || previewing || isIndexed}
@@ -932,15 +1061,17 @@ export default function KnowledgeBasePage() {
                       <ul className="space-y-2 pr-3">
                         {filteredLibrary.map(doc => (
                           <li key={doc.id}>
-                            <button
-                              type="button"
-                              onClick={() => void openDocument(doc)}
+                            <div
                               className={cn(
-                                "flex w-full items-start justify-between gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50",
+                                "flex w-full items-start gap-2 rounded-md border px-3 py-2 text-left text-sm transition-colors hover:bg-muted/50",
                                 activeDoc?.id === doc.id && "border-primary/40 bg-muted/40",
                               )}
                             >
-                              <span className="min-w-0">
+                              <button
+                                type="button"
+                                onClick={() => void openDocument(doc)}
+                                className="min-w-0 flex-1 text-left"
+                              >
                                 <span className="block truncate font-medium">
                                   {doc.meta.title || doc.filename}
                                 </span>
@@ -953,9 +1084,23 @@ export default function KnowledgeBasePage() {
                                     ? ` · ${formatDate(doc.ingested_at)}`
                                     : ""}
                                 </span>
-                              </span>
-                              {statusBadge(doc.status)}
-                            </button>
+                              </button>
+                              <div className="flex shrink-0 items-center gap-1">
+                                {statusBadge(doc.status)}
+                                {doc.is_owner ? (
+                                  <Button
+                                    variant="ghost"
+                                    size="sm"
+                                    className="h-7 w-7 p-0 text-destructive hover:text-destructive"
+                                    disabled={deleting}
+                                    aria-label={`Delete ${doc.meta.title || doc.filename}`}
+                                    onClick={() => void handleDeleteDocument(doc)}
+                                  >
+                                    <Trash2Icon className="size-3.5" />
+                                  </Button>
+                                ) : null}
+                              </div>
+                            </div>
                           </li>
                         ))}
                       </ul>
