@@ -170,7 +170,7 @@ const data = {
     },
     {
       name: "Memory",
-      url: "#",
+      url: "/memory",
       icon: (
         <BrainIcon
         />

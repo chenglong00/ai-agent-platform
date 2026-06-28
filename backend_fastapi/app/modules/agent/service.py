@@ -15,9 +15,12 @@ from langgraph.types import Command
 
 from app.ai.chat_agent.graph import get_deep_agent
 from app.ai.config import AgentSettings
+from app.core.config import settings
+from app.core.db.postgres import get_async_session_factory
 from app.modules.agent.model import AgentType
 from app.modules.chat.stream_blocks import TurnBlockCollector
 from app.modules.chat.schema import PendingToolCall
+from app.modules.memory.service import memory_service
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +117,7 @@ class AgentService:
     def _build_messages(
         user_text: str,
         conversation_history: list[tuple[str, str]] | None,
+        memory_context: str | None = None,
     ) -> list[HumanMessage | AIMessage]:
         messages: list[HumanMessage | AIMessage] = []
         history_limit = AgentService._history_turn_limit()
@@ -126,8 +130,27 @@ class AgentService:
                 messages.append(AIMessage(content=text))
             else:
                 messages.append(HumanMessage(content=text))
-        messages.append(HumanMessage(content=user_text))
+        final_text = user_text
+        if memory_context and memory_context.strip():
+            final_text = f"{memory_context.strip()}\n\n{user_text}"
+        messages.append(HumanMessage(content=final_text))
         return messages
+
+    @staticmethod
+    async def _memory_context_for_user(user_id: UUID) -> str:
+        if not settings.USER_MEMORY_ENABLED:
+            return ""
+        try:
+            factory = get_async_session_factory()
+            async with factory() as session:
+                return await memory_service.build_prompt_context(
+                    session,
+                    user_id,
+                    limit=settings.USER_MEMORY_PROMPT_MAX_ITEMS,
+                )
+        except Exception:
+            logger.exception("memory_prompt_context_failed user_id=%s", user_id)
+            return ""
 
     @staticmethod
     def _pending_tool_calls(agent: Any, config: dict) -> list[PendingToolCall]:
@@ -235,8 +258,13 @@ class AgentService:
             )
             invoke_input: Any = Command(resume=decision)
         else:
+            memory_context = await self._memory_context_for_user(user_id)
             invoke_input = {
-                "messages": self._build_messages(user_text, conversation_history),
+                "messages": self._build_messages(
+                    user_text,
+                    conversation_history,
+                    memory_context,
+                ),
             }
 
         timeout_s = self._agent_timeout_seconds()
@@ -341,8 +369,13 @@ class AgentService:
             )
             invoke_input: Any = Command(resume=decision)
         else:
+            memory_context = await self._memory_context_for_user(user_id)
             invoke_input = {
-                "messages": self._build_messages(user_text, conversation_history),
+                "messages": self._build_messages(
+                    user_text,
+                    conversation_history,
+                    memory_context,
+                ),
             }
 
         full_text_parts: list[str] = []

@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     # Deep agent skills (app/ai/skills/*/SKILL.md)
     DEEP_AGENT_SKILLS_ENABLED: bool = True
 
+    # Long-term user memory (Postgres user_memories table)
+    USER_MEMORY_ENABLED: bool = True
+    USER_MEMORY_PROMPT_MAX_ITEMS: int = 20
+
     # Initial owner (optional): set env to create an OWNER user and credentials identity on first run
     INITIAL_OWNER_EMAIL: str = ""
     INITIAL_OWNER_PASSWORD: str = ""

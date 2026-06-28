@@ -10,6 +10,11 @@ from app.ai.chat_agent.backend_factory import (
     shutdown_all_sandboxes,
 )
 from app.ai.chat_agent.knowledge_base_tools import search_knowledge_base
+from app.ai.chat_agent.memory_tools import (
+    list_user_memories,
+    save_user_memory,
+    search_user_memories,
+)
 from app.ai.chat_agent.playwright_pool import shutdown_all_browsers
 from app.ai.chat_agent.playwright_tools import PLAYWRIGHT_BROWSER_TOOLS
 from app.ai.chat_agent.tools import check_weather
@@ -39,6 +44,11 @@ Work step-by-step; read the page after navigation or clicks when unsure what to 
 _SYSTEM_PROMPT_SKILLS = """
 Use list_skills to see skills available to this user, then read_skill with a skill id before following specialized workflows."""
 
+_SYSTEM_PROMPT_MEMORY = """
+Long-term memory about the user may appear in the message context. Use it to personalize replies.
+When the user shares durable facts, preferences, or profile details, read the user-memory skill and call save_user_memory.
+Use search_user_memories or list_user_memories when you need to recall what you know about the user."""
+
 _SYSTEM_PROMPT_TAIL = "\nSummarize tool results briefly for the user."
 
 
@@ -48,6 +58,8 @@ def _system_prompt() -> str:
         parts.append(_SYSTEM_PROMPT_BROWSER)
     if settings.DEEP_AGENT_SKILLS_ENABLED:
         parts.append(_SYSTEM_PROMPT_SKILLS)
+    if settings.USER_MEMORY_ENABLED:
+        parts.append(_SYSTEM_PROMPT_MEMORY)
     parts.append(_SYSTEM_PROMPT_TAIL)
     return "\n".join(parts)
 
@@ -58,6 +70,8 @@ def _agent_tools() -> list:
         tools.extend([list_skills, read_skill])
     if settings.KNOWLEDGE_BASE_RAG_ENABLED:
         tools.append(search_knowledge_base)
+    if settings.USER_MEMORY_ENABLED:
+        tools.extend([save_user_memory, search_user_memories, list_user_memories])
     if settings.BROWSER_PLAYWRIGHT_ENABLED:
         tools.extend(PLAYWRIGHT_BROWSER_TOOLS)
     return tools
