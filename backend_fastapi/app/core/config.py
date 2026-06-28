@@ -69,6 +69,10 @@ class Settings(BaseSettings):
     USER_MEMORY_ENABLED: bool = True
     USER_MEMORY_PROMPT_MAX_ITEMS: int = 20
 
+    # Scheduled workflows (Postgres workflows table)
+    WORKFLOW_SCHEDULER_ENABLED: bool = True
+    WORKFLOW_SCHEDULER_POLL_SECONDS: int = 60
+
     # Initial owner (optional): set env to create an OWNER user and credentials identity on first run
     INITIAL_OWNER_EMAIL: str = ""
     INITIAL_OWNER_PASSWORD: str = ""
@@ -91,8 +95,13 @@ class Settings(BaseSettings):
 
     # Deep agent backend: "local" | "daytona" | "modal"
     DEEP_AGENT_BACKEND: str = "local"
-    # Working directory inside the sandbox the agent operates in.
+    # Remote sandbox home root (Daytona/Modal): /home/{user_slug}/
+    DEEP_AGENT_SANDBOX_HOME_ROOT: str = "/home"
+    # Workspace subdirectory under each user's home: /home/{user_slug}/workspace/
+    DEEP_AGENT_SANDBOX_WORKSPACE_DIR: str = "workspace"
+    # Legacy (unused for path layout; kept for older env files).
     DEEP_AGENT_SANDBOX_WORKDIR: str = "/workspace"
+    DEEP_AGENT_SANDBOX_USERS_DIR: str = "users"
     # Host directory for per-user local sandboxes (DEEP_AGENT_BACKEND=local).
     DEEP_AGENT_SANDBOX_LOCAL_ROOT: Path = Path("data/agent_sandboxes")
     # Idle TTL for pooled user sandboxes; 0 disables automatic cleanup.
@@ -103,9 +112,14 @@ class Settings(BaseSettings):
     MODAL_TOKEN_ID: str = ""
     MODAL_TOKEN_SECRET: str = ""
     # Daytona (DEEP_AGENT_BACKEND=daytona): requires DAYTONA_API_KEY.
+    # One shared Daytona VM is used; users are isolated by folder under workdir/users/.
     DAYTONA_API_KEY: str = ""
     DAYTONA_TARGET: str = "us"
     DAYTONA_API_URL: str = ""
+    # Optional: attach to an existing sandbox instead of creating a new one.
+    DAYTONA_SANDBOX_ID: str = ""
+    # Keep the shared VM across API restarts (recommended). If true, shutdown deletes the VM.
+    DAYTONA_DELETE_ON_SHUTDOWN: bool = False
 
     # Playwright browser tools (per-user pooled Chromium sessions)
     BROWSER_PLAYWRIGHT_ENABLED: bool = False

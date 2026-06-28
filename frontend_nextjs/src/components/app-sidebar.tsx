@@ -20,7 +20,7 @@ import {
   SidebarTrigger,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { SquarePenIcon, ChartBarIcon, FolderIcon, UsersIcon, CameraIcon, FileTextIcon, CircleHelpIcon, SearchIcon, DatabaseIcon, BrainIcon, SparklesIcon, LayoutDashboard } from "lucide-react"
+import { SquarePenIcon, ChartBarIcon, FolderIcon, Workflow, CameraIcon, FileTextIcon, CircleHelpIcon, SearchIcon, DatabaseIcon, BrainIcon, SparklesIcon, LayoutDashboard, Plug, Bot } from "lucide-react"
 import {
   fetchCurrentUser,
   sidebarDisplayName,
@@ -76,10 +76,10 @@ const data = {
       ),
     },
     {
-      title: "Team",
-      url: "#",
+      title: "Workflow",
+      url: "/workflow",
       icon: (
-        <UsersIcon
+        <Workflow
         />
       ),
     },
@@ -173,6 +173,22 @@ const data = {
       url: "/memory",
       icon: (
         <BrainIcon
+        />
+      ),
+    },
+    {
+      name: "Connector",
+      url: "/connector",
+      icon: (
+        <Plug
+        />
+      ),
+    },
+    {
+      name: "SubAgent",
+      url: "/subagent",
+      icon: (
+        <Bot
         />
       ),
     },

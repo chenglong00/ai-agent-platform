@@ -1,4 +1,12 @@
-"""Per-user Deep Agent sandbox backend pool (local, Modal, Daytona)."""
+"""Per-user Deep Agent sandbox backend pool (local, Modal, Daytona).
+
+Daytona uses ONE shared VM. Each user gets:
+
+- home: ``/home/{user_slug}/``
+- workspace: ``/home/{user_slug}/workspace/``
+
+``DEEP_AGENT_SANDBOX_HOME_ROOT`` defaults to ``/home``; VM init uses sudo when needed.
+"""
 
 from __future__ import annotations
 
@@ -11,10 +19,13 @@ from dataclasses import dataclass
 from typing import Any
 
 from deepagents.backends import LocalShellBackend
-from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.protocol import BackendProtocol, SandboxBackendProtocol
 
 from app.ai.chat_agent.run_context import get_user_id_from_run
 from app.ai.chat_agent.playwright_pool import cleanup_idle_browsers
+from app.ai.chat_agent.sandbox_paths import load_sandbox_paths
+from app.ai.chat_agent.sandbox_shell import ensure_directory_command
+from app.ai.chat_agent.user_scoped_backend import UserScopedSandboxBackend
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -27,10 +38,18 @@ class _UserSandboxEntry:
     last_used_at: float
 
 
+@dataclass
+class _SharedDaytonaEntry:
+    raw_sandbox: Any
+    inner_backend: SandboxBackendProtocol
+
+
 _cleanup_task: asyncio.Task[None] | None = None
 _pool: dict[str, _UserSandboxEntry] = {}
 _pool_lock = threading.Lock()
 _user_create_locks: dict[str, threading.Lock] = {}
+_shared_daytona: _SharedDaytonaEntry | None = None
+_shared_daytona_lock = threading.Lock()
 
 
 def _backend_name() -> str:
@@ -50,8 +69,14 @@ def _apply_sandbox_env() -> None:
         os.environ.setdefault("MODAL_TOKEN_SECRET", settings.MODAL_TOKEN_SECRET)
 
 
-def _destroy_raw_sandbox(raw_sandbox: Any) -> None:
+def _destroy_raw_sandbox(raw_sandbox: Any, *, force: bool = False) -> None:
     backend_name = _backend_name()
+    if backend_name == "daytona" and not force and not settings.DAYTONA_DELETE_ON_SHUTDOWN:
+        logger.info(
+            "daytona_sandbox_kept_alive sandbox_id=%s",
+            getattr(raw_sandbox, "id", raw_sandbox),
+        )
+        return
     try:
         if backend_name == "daytona":
             if hasattr(raw_sandbox, "delete"):
@@ -64,16 +89,108 @@ def _destroy_raw_sandbox(raw_sandbox: Any) -> None:
         logger.exception("user_sandbox_shutdown_failed backend=%s", backend_name)
 
 
+def _pick_existing_daytona_sandbox(client: Any) -> Any | None:
+    """Reuse a running sandbox when DAYTONA_SANDBOX_ID is unset."""
+    try:
+        sandboxes = list(client.list())
+    except Exception:
+        logger.exception("daytona_list_sandboxes_failed")
+        return None
+    if not sandboxes:
+        return None
+    for sb in sandboxes:
+        state = str(getattr(sb, "state", "") or "").lower()
+        if "start" in state or state in {"", "running", "active"}:
+            return sb
+    return sandboxes[0]
+
+
+def _home_base_dir() -> str:
+    return settings.DEEP_AGENT_SANDBOX_HOME_ROOT.rstrip("/") or "/home"
+
+
+def _prepare_shared_sandbox_dirs(inner: SandboxBackendProtocol) -> None:
+    """Ensure /home (or configured root) is writable for all sandbox users."""
+    base = _home_base_dir()
+    inner.execute(ensure_directory_command(base))
+
+
+def _get_or_create_shared_daytona() -> SandboxBackendProtocol:
+    """Return the single shared Daytona backend (creates one VM if needed)."""
+    global _shared_daytona
+    with _shared_daytona_lock:
+        if _shared_daytona is not None:
+            return _shared_daytona.inner_backend
+
+        _apply_sandbox_env()
+        from daytona import Daytona
+        from langchain_daytona import DaytonaSandbox
+
+        client = Daytona()
+        sandbox_id = settings.DAYTONA_SANDBOX_ID.strip()
+        if sandbox_id:
+            raw_sandbox = client.get(sandbox_id)
+            logger.info("deep_agent_daytona_reused sandbox_id=%s", sandbox_id)
+        else:
+            raw_sandbox = _pick_existing_daytona_sandbox(client)
+            if raw_sandbox is not None:
+                sandbox_id = str(getattr(raw_sandbox, "id", raw_sandbox))
+                logger.info(
+                    "deep_agent_daytona_reused_existing sandbox_id=%s "
+                    "(set DAYTONA_SANDBOX_ID=%s in .env to pin)",
+                    sandbox_id,
+                    sandbox_id,
+                )
+            else:
+                raw_sandbox = client.create()
+                sandbox_id = str(getattr(raw_sandbox, "id", raw_sandbox))
+                logger.info(
+                    "deep_agent_daytona_created sandbox_id=%s "
+                    "— add DAYTONA_SANDBOX_ID=%s to .env.local so files survive restarts",
+                    sandbox_id,
+                    sandbox_id,
+                )
+
+        inner = DaytonaSandbox(sandbox=raw_sandbox)
+        _prepare_shared_sandbox_dirs(inner)
+        _shared_daytona = _SharedDaytonaEntry(
+            raw_sandbox=raw_sandbox,
+            inner_backend=inner,
+        )
+        return inner
+
+
+def _shutdown_shared_daytona() -> None:
+    global _shared_daytona
+    with _shared_daytona_lock:
+        entry = _shared_daytona
+        _shared_daytona = None
+    if entry is None:
+        return
+    _destroy_raw_sandbox(entry.raw_sandbox)
+    logger.info(
+        "shared_daytona_shutdown sandbox_id=%s",
+        getattr(entry.raw_sandbox, "id", entry.raw_sandbox),
+    )
+
+
 def _create_backend_for_user(user_id: str) -> _UserSandboxEntry:
     backend_name = _backend_name()
-    workdir = settings.DEEP_AGENT_SANDBOX_WORKDIR
+    paths = load_sandbox_paths(user_id)
 
     if backend_name == "local":
-        root_dir = settings.DEEP_AGENT_SANDBOX_LOCAL_ROOT / user_id
-        root_dir.mkdir(parents=True, exist_ok=True)
-        logger.info("deep_agent_backend=local user_id=%s root_dir=%s", user_id, root_dir)
+        from pathlib import Path
+
+        Path(paths.home).mkdir(parents=True, exist_ok=True)
+        Path(paths.workspace).mkdir(parents=True, exist_ok=True)
+        logger.info(
+            "deep_agent_backend=local user_id=%s home=%s workspace=%s",
+            user_id,
+            paths.home,
+            paths.workspace,
+        )
         return _UserSandboxEntry(
-            backend=LocalShellBackend(root_dir=str(root_dir)),
+            backend=LocalShellBackend(root_dir=paths.workspace),
             raw_sandbox=None,
             last_used_at=time.monotonic(),
         )
@@ -81,19 +198,26 @@ def _create_backend_for_user(user_id: str) -> _UserSandboxEntry:
     _apply_sandbox_env()
 
     if backend_name == "daytona":
-        from daytona import Daytona
-        from langchain_daytona import DaytonaSandbox
-
-        raw_sandbox = Daytona().create()
+        inner = _get_or_create_shared_daytona()
+        scoped = UserScopedSandboxBackend(
+            inner,
+            user_id=user_id,
+            user_root=paths.workspace,
+            execute_cwd=paths.workspace,
+            home=paths.home,
+        )
+        scoped.ensure_user_root()
         logger.info(
-            "deep_agent_backend=daytona user_id=%s sandbox_id=%s workdir=%s",
+            "deep_agent_backend=daytona user_id=%s slug=%s home=%s workspace=%s sandbox_id=%s",
             user_id,
-            getattr(raw_sandbox, "id", raw_sandbox),
-            workdir,
+            paths.slug,
+            paths.home,
+            paths.workspace,
+            inner.id,
         )
         return _UserSandboxEntry(
-            backend=DaytonaSandbox(sandbox=raw_sandbox),
-            raw_sandbox=raw_sandbox,
+            backend=scoped,
+            raw_sandbox=None,
             last_used_at=time.monotonic(),
         )
 
@@ -102,15 +226,24 @@ def _create_backend_for_user(user_id: str) -> _UserSandboxEntry:
         from langchain_modal import ModalSandbox
 
         app = modal.App.lookup(settings.DEEP_AGENT_MODAL_APP, create_if_missing=True)
-        raw_sandbox = modal.Sandbox.create(app=app, workdir=workdir)
+        raw_sandbox = modal.Sandbox.create(app=app, workdir=paths.home)
+        inner = ModalSandbox(sandbox=raw_sandbox)
+        scoped = UserScopedSandboxBackend(
+            inner,
+            user_id=user_id,
+            user_root=paths.workspace,
+            execute_cwd=paths.workspace,
+            home=paths.home,
+        )
+        scoped.ensure_user_root()
         logger.info(
-            "deep_agent_backend=modal user_id=%s app=%s workdir=%s",
+            "deep_agent_backend=modal user_id=%s home=%s workspace=%s",
             user_id,
-            settings.DEEP_AGENT_MODAL_APP,
-            workdir,
+            paths.home,
+            paths.workspace,
         )
         return _UserSandboxEntry(
-            backend=ModalSandbox(sandbox=raw_sandbox),
+            backend=scoped,
             raw_sandbox=raw_sandbox,
             last_used_at=time.monotonic(),
         )
@@ -150,7 +283,7 @@ def get_user_backend(user_id: str) -> BackendProtocol:
 
 
 def release_user_sandbox(user_id: str) -> None:
-    """Stop and remove a user's sandbox from the pool."""
+    """Remove a user's pooled backend handle (does not delete shared Daytona VM)."""
     key = str(user_id)
     with _pool_lock:
         entry = _pool.pop(key, None)
@@ -162,7 +295,7 @@ def release_user_sandbox(user_id: str) -> None:
 
 
 def shutdown_all_sandboxes() -> None:
-    """Stop every pooled sandbox (app shutdown or agent reset)."""
+    """Stop pooled backends and the shared Daytona VM (if any)."""
     with _pool_lock:
         entries = list(_pool.items())
         _pool.clear()
@@ -170,10 +303,12 @@ def shutdown_all_sandboxes() -> None:
         if entry.raw_sandbox is not None:
             _destroy_raw_sandbox(entry.raw_sandbox)
         logger.info("user_sandbox_shutdown user_id=%s", user_id)
+    if _backend_name() == "daytona":
+        _shutdown_shared_daytona()
 
 
 def cleanup_idle_sandboxes() -> int:
-    """Release sandboxes idle longer than the configured TTL. Returns count removed."""
+    """Release idle user backend handles. Returns count removed."""
     ttl = settings.DEEP_AGENT_SANDBOX_IDLE_TTL_SECONDS
     if ttl <= 0:
         return 0

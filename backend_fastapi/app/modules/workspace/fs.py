@@ -5,12 +5,14 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from deepagents.backends.protocol import BackendProtocol
+from deepagents.backends.protocol import BackendProtocol, ExecuteResponse
 
 from app.ai.chat_agent.backend_factory import get_user_backend
+from app.ai.chat_agent.sandbox_paths import load_sandbox_paths
 from app.core.config import settings
 
 logger = logging.getLogger(__name__)
@@ -81,17 +83,18 @@ def _is_local_backend() -> bool:
 def _local_root_for_user(user_id: str) -> Path | None:
     if not _is_local_backend():
         return None
-    root = settings.DEEP_AGENT_SANDBOX_LOCAL_ROOT / user_id
-    root.mkdir(parents=True, exist_ok=True)
-    return root.resolve()
+    paths = load_sandbox_paths(user_id)
+    workspace = Path(paths.workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    return workspace.resolve()
 
 
-def _sandbox_abs_path(rel_path: str) -> str:
-    workdir = settings.DEEP_AGENT_SANDBOX_WORKDIR.rstrip("/") or "/workspace"
+def _sandbox_abs_path(user_id: str, rel_path: str) -> str:
     rel = _normalize_rel_path(rel_path)
+    root = load_sandbox_paths(user_id).workspace
     if not rel:
-        return workdir
-    return f"{workdir}/{rel}"
+        return root
+    return f"{root}/{rel}"
 
 
 def _open_user_backend(user_id: str) -> BackendProtocol:
@@ -151,20 +154,50 @@ def _walk_local_root(root: Path, start: Path) -> list[FsEntry]:
     return entries
 
 
-def _entries_from_sandbox_execute(
+def _sandbox_raw_execute(
     backend: BackendProtocol,
-    rel_path: str,
-) -> list[FsEntry]:
-    """List files via sandbox shell — Daytona/Modal glob+ls can hang indefinitely."""
-    start = _sandbox_abs_path(rel_path)
-    skip = sorted(_SKIP_DIRS)
-    script = f"""python3 -c "
-import json, os, sys
+    command: str,
+    *,
+    timeout: int | None = 120,
+) -> ExecuteResponse:
+    """Execute on the underlying sandbox (bypasses user-home cd wrapper)."""
+    raw = getattr(backend, "execute_sandbox_raw", None)
+    if callable(raw):
+        return raw(command, timeout=timeout)
+    inner = getattr(backend, "_inner", backend)
+    exec_fn = getattr(inner, "execute", None)
+    if exec_fn is None:
+        raise WorkspaceFsError("read_failed", "Sandbox backend cannot execute commands")
+    if timeout is not None:
+        return exec_fn(command, timeout=timeout)
+    return exec_fn(command)
+
+
+def _strip_sandbox_noise(output: str) -> str:
+    """Remove Daytona stderr wrappers and other non-JSON noise."""
+    cleaned = re.sub(r"\n<stderr>.*?</stderr>", "", output, flags=re.DOTALL)
+    return cleaned.strip()
+
+
+def _parse_listing_payload(output: str) -> dict:
+    text = _strip_sandbox_noise(output)
+    if not text:
+        raise json.JSONDecodeError("empty output", "", 0)
+    for line in reversed(text.splitlines()):
+        line = line.strip()
+        if line.startswith("{"):
+            return json.loads(line)
+    return json.loads(text)
+
+
+def _workspace_listing_command(root: str, skip: list[str]) -> str:
+    """Base64-wrapped Python listing (avoids shell quoting issues)."""
+    py = f"""import json, os, sys
 SKIP = set({skip!r})
-ROOT = {start!r}
+ROOT = {root!r}
 MAX = {_MAX_ENTRIES}
 if not os.path.isdir(ROOT):
-    print(json.dumps({{'entries': [], 'truncated': False}}))
+    print(json.dumps({{"entries": [], "truncated": False}}))
     sys.exit(0)
 entries = []
 truncated = False
@@ -177,7 +210,7 @@ for dirpath, dirnames, filenames in os.walk(ROOT, followlinks=False):
             break
         try:
             st = os.stat(dirpath)
-            entries.append({{'path': rel_dir, 'type': 'directory', 'size': 0, 'mtime': st.st_mtime}})
+            entries.append({{"path": rel_dir, "type": "directory", "size": 0, "mtime": st.st_mtime}})
         except OSError:
             pass
     for f in sorted(filenames, key=str.lower):
@@ -190,19 +223,134 @@ for dirpath, dirnames, filenames in os.walk(ROOT, followlinks=False):
         except OSError:
             continue
         rel = os.path.relpath(full, ROOT)
-        entries.append({{'path': rel, 'type': 'file', 'size': st.st_size, 'mtime': st.st_mtime}})
+        entries.append({{"path": rel, "type": "file", "size": st.st_size, "mtime": st.st_mtime}})
     if truncated:
         break
-print(json.dumps({{'entries': entries, 'truncated': truncated}}))
-" 2>/dev/null
+print(json.dumps({{"entries": entries, "truncated": truncated}}))
 """
-    result = backend.execute(script)
-    out = (result.output or "").strip()
-    if not out:
-        raise WorkspaceFsError("read_failed", "Empty response listing sandbox workspace")
+    encoded = base64.b64encode(py.encode("utf-8")).decode("ascii")
+    runner = f"import base64; exec(base64.b64decode('{encoded}').decode())"
+    return (
+        f"python3 -c {json.dumps(runner)} 2>/dev/null "
+        f"|| python -c {json.dumps(runner)} 2>/dev/null"
+    )
+
+
+def _read_file_from_sandbox_execute(
+    backend: BackendProtocol,
+    user_id: str,
+    normalized: str,
+) -> FsFile:
+    """Read a file via sandbox shell — same transport as tree listing."""
+    ensure = getattr(backend, "ensure_user_root", None)
+    if callable(ensure):
+        ensure()
+
+    abs_path = _sandbox_abs_path(user_id, normalized)
+    py = f"""import json, os, sys
+path = {abs_path!r}
+if not os.path.isfile(path):
+    print(json.dumps({{"error": "not_found"}}))
+    sys.exit(0)
+with open(path, "rb") as f:
+    raw = f.read()
+if b"\\x00" in raw:
+    print(json.dumps({{"binary": True, "size": len(raw)}}))
+    sys.exit(0)
+if len(raw) > {_MAX_FILE_BYTES}:
+    text = raw[:{_MAX_FILE_BYTES}].decode("utf-8", errors="replace")
+    print(json.dumps({{"content": text, "size": len(raw), "truncated": True}}))
+    sys.exit(0)
+try:
+    text = raw.decode("utf-8")
+except UnicodeDecodeError:
+    text = raw.decode("utf-8", errors="replace")
+print(json.dumps({{"content": text, "size": len(raw), "truncated": False}}))
+"""
+    encoded = base64.b64encode(py.encode("utf-8")).decode("ascii")
+    runner = f"import base64; exec(base64.b64decode('{encoded}').decode())"
+    command = (
+        f"python3 -c {json.dumps(runner)} 2>/dev/null "
+        f"|| python -c {json.dumps(runner)} 2>/dev/null"
+    )
+    result = _sandbox_raw_execute(backend, command)
+    out = result.output or ""
+    if result.exit_code not in (0, None) and not out.strip():
+        raise WorkspaceFsError(
+            "read_failed",
+            f"Sandbox read failed (exit {result.exit_code})",
+        )
     try:
-        data = json.loads(out.split("\n")[-1])
+        data = _parse_listing_payload(out)
     except json.JSONDecodeError as exc:
+        snippet = _strip_sandbox_noise(out)[:240]
+        logger.warning(
+            "sandbox_read_parse_failed user_id=%s path=%s exit=%s snippet=%r",
+            user_id,
+            abs_path,
+            result.exit_code,
+            snippet,
+        )
+        raise WorkspaceFsError(
+            "read_failed",
+            f"Could not parse sandbox read response: {exc}",
+        ) from None
+
+    if not isinstance(data, dict):
+        raise WorkspaceFsError("read_failed", "Unexpected sandbox read response")
+    if data.get("error") == "not_found":
+        raise WorkspaceFsError("not_found", f"File not found: {normalized}")
+    if data.get("binary"):
+        return FsFile(
+            path=normalized,
+            size=int(data.get("size", 0) or 0),
+            modified_at=None,
+            content="[binary file]",
+            binary=True,
+        )
+
+    text = str(data.get("content") or "")
+    size = int(data.get("size", len(text.encode("utf-8"))) or 0)
+    return FsFile(
+        path=normalized,
+        size=size,
+        modified_at=None,
+        content=text,
+        truncated=bool(data.get("truncated")),
+    )
+
+
+def _entries_from_sandbox_execute(
+    backend: BackendProtocol,
+    user_id: str,
+    rel_path: str,
+) -> list[FsEntry]:
+    """List files via sandbox shell — Daytona/Modal glob+ls can hang indefinitely."""
+    ensure = getattr(backend, "ensure_user_root", None)
+    if callable(ensure):
+        ensure()
+
+    start = _sandbox_abs_path(user_id, rel_path)
+    skip = sorted(_SKIP_DIRS)
+    command = _workspace_listing_command(start, skip)
+    result = _sandbox_raw_execute(backend, command)
+    out = result.output or ""
+    if result.exit_code not in (0, None) and not out.strip():
+        raise WorkspaceFsError(
+            "read_failed",
+            f"Sandbox listing failed (exit {result.exit_code})",
+        )
+    try:
+        data = _parse_listing_payload(out)
+    except json.JSONDecodeError as exc:
+        snippet = _strip_sandbox_noise(out)[:240]
+        logger.warning(
+            "sandbox_listing_parse_failed user_id=%s root=%s exit=%s snippet=%r",
+            user_id,
+            start,
+            result.exit_code,
+            snippet,
+        )
         raise WorkspaceFsError(
             "read_failed",
             f"Could not parse sandbox listing: {exc}",
@@ -248,7 +396,7 @@ class UserWorkspaceFS:
             return _walk_local_root(local_root, start)
 
         backend = _open_user_backend(self._user_id)
-        return _entries_from_sandbox_execute(backend, normalized)
+        return _entries_from_sandbox_execute(backend, self._user_id, normalized)
 
     def read_file(self, rel_path: str) -> FsFile:
         normalized = _normalize_rel_path(rel_path)
@@ -301,45 +449,11 @@ class UserWorkspaceFS:
             )
 
         backend = _open_user_backend(self._user_id)
-        abs_path = _sandbox_abs_path(normalized)
-        result = backend.read(abs_path)
-        if result.error:
-            raise WorkspaceFsError("not_found", result.error)
-        file_data = result.file_data
-        if file_data is None:
-            raise WorkspaceFsError("read_failed", "No file data returned")
-
-        if file_data.encoding == "base64":
-            try:
-                raw = base64.b64decode(file_data.content)
-                size = len(raw)
-            except Exception:
-                size = 0
-            return FsFile(
-                path=normalized,
-                size=size,
-                modified_at=None,
-                content="[binary file]",
-                binary=True,
-            )
-
-        text = file_data.content or ""
-        truncated = "[Output was truncated due to size limits." in text
-        if len(text.encode("utf-8")) > _MAX_FILE_BYTES:
-            truncated = True
-        return FsFile(
-            path=normalized,
-            size=len(text.encode("utf-8")),
-            modified_at=None,
-            content=text,
-            truncated=truncated,
-        )
+        return _read_file_from_sandbox_execute(backend, self._user_id, normalized)
 
 
 def workspace_root_label(user_id: str) -> str:
     """Human-readable workspace root for UI hints (does not touch the sandbox)."""
     backend_name = settings.DEEP_AGENT_BACKEND.strip().lower()
-    if backend_name == "local":
-        return str((settings.DEEP_AGENT_SANDBOX_LOCAL_ROOT / user_id).resolve())
-    workdir = settings.DEEP_AGENT_SANDBOX_WORKDIR or "/workspace"
-    return f"{backend_name}:{workdir}"
+    paths = load_sandbox_paths(user_id)
+    return f"{backend_name}:{paths.workspace}"

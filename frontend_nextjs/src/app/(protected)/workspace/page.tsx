@@ -179,15 +179,7 @@ export default function WorkspacePage() {
   const isChanged = selectedPath ? changedPaths.has(selectedPath) : false
 
   return (
-    <SidebarProvider
-      className="h-svh min-h-0 overflow-hidden"
-      style={
-        {
-          "--sidebar-width": "calc(var(--spacing) * 72)",
-          "--header-height": "calc(var(--spacing) * 12)",
-        } as React.CSSProperties
-      }
-    >
+    <SidebarProvider className="h-svh min-h-0 overflow-hidden">
       <AppSidebar variant="inset" />
       <SidebarInset className="min-h-0 overflow-hidden">
         <header className="flex h-14 shrink-0 items-center gap-2 border-b px-4">

@@ -121,7 +121,9 @@ export function WorkspaceCodePanel({
         ) : effectiveMode === "diff" ? (
           <DiffView original={originalContent ?? ""} current={currentContent ?? ""} />
         ) : effectiveMode === "preview" && previewKind === "html" ? (
-          <HtmlPreview content={currentContent ?? ""} title={name} />
+          <div className="flex h-full min-h-[320px] flex-col">
+            <HtmlPreview content={currentContent ?? ""} title={name} />
+          </div>
         ) : effectiveMode === "preview" && previewKind === "markdown" ? (
           <MarkdownPreview content={currentContent ?? ""} />
         ) : (
@@ -202,7 +204,7 @@ function HtmlPreview({ content, title }: { content: string; title: string }) {
       title={`Preview of ${title}`}
       srcDoc={content}
       sandbox="allow-scripts allow-same-origin"
-      className="size-full border-0 bg-white"
+      className="min-h-[320px] w-full flex-1 border-0 bg-white"
     />
   )
 }

@@ -1,7 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useRef, useState } from "react"
-import { Loader2Icon, SendHorizonalIcon } from "lucide-react"
+import { Loader2Icon, PlusIcon, SendHorizonalIcon } from "lucide-react"
 import { flushSync } from "react-dom"
 
 import { BrowserLivePanel } from "@/components/ai/browser-live-panel"
@@ -20,8 +20,10 @@ import { Textarea } from "@/components/ui/textarea"
 import { useContextMentionMenu } from "@/hooks/use-context-mention-menu"
 import { useSkillSlashMenu } from "@/hooks/use-skill-slash-menu"
 import { getToken } from "@/lib/auth"
+import { fetchCurrentUser } from "@/lib/api"
 import {
   createChatConversation,
+  fetchChatConversations,
   fetchChatMessages,
   notifyChatConversationsUpdated,
   streamChatMessage,
@@ -108,7 +110,25 @@ export function WorkspaceChatPanel({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [authToken, setAuthToken] = useState("")
+  const storageKeyRef = useRef(workspaceConversationStorageKey())
   const scrollRef = useRef<HTMLDivElement>(null)
+
+  const loadConversation = useCallback(
+    async (token: string, id: string) => {
+      const rows = await fetchChatMessages(token, id)
+      setConversationId(id)
+      setMessages(rows.map(rowToMessage))
+      localStorage.setItem(storageKeyRef.current, id)
+    },
+    [],
+  )
+
+  const startNewChat = useCallback(() => {
+    localStorage.removeItem(storageKeyRef.current)
+    setConversationId(null)
+    setMessages([])
+    setError(null)
+  }, [])
 
   useEffect(() => {
     const el = scrollRef.current
@@ -126,31 +146,58 @@ export function WorkspaceChatPanel({
       }
       setAuthToken(token)
 
-      const storedId = localStorage.getItem(workspaceConversationStorageKey)
-      if (!storedId) {
-        setSessionReady(true)
-        return
+      const userResult = await fetchCurrentUser(token)
+      storageKeyRef.current = workspaceConversationStorageKey(
+        userResult.user?.id,
+      )
+
+      const storedId = localStorage.getItem(storageKeyRef.current)
+      let loaded = false
+
+      if (storedId) {
+        try {
+          await loadConversation(token, storedId)
+          loaded = true
+        } catch (loadErr) {
+          const detail =
+            loadErr instanceof Error ? loadErr.message : "Could not load chat"
+          if (detail.toLowerCase().includes("not found")) {
+            localStorage.removeItem(storageKeyRef.current)
+          } else {
+            setConversationId(storedId)
+            setError(detail)
+            loaded = true
+          }
+        }
       }
 
-      try {
-        const rows = await fetchChatMessages(token, storedId)
-        if (cancelled) return
-        setConversationId(storedId)
-        setMessages(rows.map(rowToMessage))
-      } catch {
-        if (!cancelled) {
-          localStorage.removeItem(workspaceConversationStorageKey)
+      if (!loaded) {
+        try {
+          const { items } = await fetchChatConversations(token, { limit: 30 })
+          const existing = items
+            .filter(c => c.name === "Workspace")
+            .sort(
+              (a, b) =>
+                new Date(b.updated_at).getTime() -
+                new Date(a.updated_at).getTime(),
+            )[0]
+          if (existing) {
+            await loadConversation(token, existing.id)
+            loaded = true
+          }
+        } catch {
+          /* ignore — user can start on first message */
         }
-      } finally {
-        if (!cancelled) setSessionReady(true)
       }
+
+      if (!cancelled) setSessionReady(true)
     }
 
     void bootstrap()
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [loadConversation])
 
   const sendPrompt = useCallback(
     async (raw: string) => {
@@ -170,7 +217,7 @@ export function WorkspaceChatPanel({
             description: "Agent session from workspace page",
           })
           conv = created.id
-          localStorage.setItem(workspaceConversationStorageKey, conv)
+          localStorage.setItem(storageKeyRef.current, conv)
           setConversationId(conv)
           notifyChatConversationsUpdated()
         } catch (e) {
@@ -358,12 +405,28 @@ export function WorkspaceChatPanel({
     >
       <div className="flex items-center justify-between border-b px-3 py-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
         <span>Deep Agent</span>
-        {sending ? (
-          <span className="flex items-center gap-1 normal-case font-normal">
-            <Loader2Icon className="size-3 animate-spin" />
-            Working…
-          </span>
-        ) : null}
+        <div className="flex items-center gap-2 normal-case">
+          {conversationId ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="h-6 gap-1 px-2 text-[10px] font-normal"
+              onClick={startNewChat}
+              disabled={sending}
+              title="Start a new workspace chat"
+            >
+              <PlusIcon className="size-3" />
+              New chat
+            </Button>
+          ) : null}
+          {sending ? (
+            <span className="flex items-center gap-1 font-normal">
+              <Loader2Icon className="size-3 animate-spin" />
+              Working…
+            </span>
+          ) : null}
+        </div>
       </div>
 
       <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">

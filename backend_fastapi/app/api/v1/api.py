@@ -9,6 +9,7 @@ from app.modules.chat.router import router as chat_router
 from app.modules.group.router import router as group_router
 from app.modules.knowledge_base.router import router as knowledge_base_router
 from app.modules.memory.router import router as memory_router
+from app.modules.workflow.router import router as workflow_router
 from app.modules.skills.router import router as skills_router
 from app.modules.workspace.router import router as workspace_router
 
@@ -33,5 +34,10 @@ api_router.include_router(
     memory_router,
     prefix="/memory",
     tags=["memory"],
+)
+api_router.include_router(
+    workflow_router,
+    prefix="/workflows",
+    tags=["workflows"],
 )
 api_router.include_router(workspace_router, prefix="/workspace", tags=["workspace"])

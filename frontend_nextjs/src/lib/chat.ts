@@ -5,8 +5,11 @@ const chatBase = `${apiBaseUrl}/api/v1/chat`;
 export const chatConversationStorageKey = "ai_platform_chat_conversation_id";
 
 /** Persisted workspace panel conversation (separate from main chat). */
-export const workspaceConversationStorageKey =
-  "ai_platform_workspace_conversation_id";
+export function workspaceConversationStorageKey(userId?: string | null): string {
+  const base = "ai_platform_workspace_conversation_id";
+  if (userId) return `${base}_${userId}`;
+  return base;
+}
 
 /** Fired when the sidebar should refetch the conversation list (same tab). */
 export const CHAT_CONVERSATIONS_UPDATED_EVENT =
