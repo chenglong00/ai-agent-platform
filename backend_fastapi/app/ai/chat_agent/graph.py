@@ -23,12 +23,12 @@ When the user asks about weather, call check_weather with their location.
 For coding, files, or shell work use the built-in filesystem and execute tools in the sandbox."""
 
 _SYSTEM_PROMPT_BROWSER = """
-When the user asks to browse the web, research a site, fill a form, or interact with a page, use the browser_* tools:
+When the user asks to browse the web, research a site, fill a form, or interact with a page, use the browser_* tools one at a time (never call multiple browser tools in parallel):
 1. browser_goto to open a URL
 2. browser_read to inspect visible page text before acting
 3. browser_click, browser_type, browser_press for interactions
 4. browser_screenshot when the user should see the current page
-5. browser_close when finished
+5. browser_close only once when completely finished (never while other browser tools may still run)
 Work step-by-step; read the page after navigation or clicks when unsure what to do next."""
 
 _SYSTEM_PROMPT_TAIL = "\nSummarize tool results briefly for the user."

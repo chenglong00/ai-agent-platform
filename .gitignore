@@ -1,6 +1,119 @@
-# Local environment overrides (secrets, machine-specific config)
-.env.local
-.env.*.local
+# =============================================================================
+# AI Agent Platform — monorepo gitignore
+# =============================================================================
 
-# Uploaded knowledge base files (local dev)
+# --- OS -----------------------------------------------------------------------
+.DS_Store
+.AppleDouble
+.LSOverride
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# --- Environment & secrets (never commit) -------------------------------------
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+backend_fastapi/secrets/
+**/*credentials*.json
+**/*service-account*.json
+**/*-sa.json
+*.pem
+*.key
+*.p12
+*.pfx
+
+# --- Python (backend) ---------------------------------------------------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+.venv/
+venv/
+ENV/
+env/
+
+.Python
+*.egg
+*.egg-info/
+.eggs/
+dist/
+build/
+wheels/
+pip-wheel-metadata/
+*.manifest
+*.spec
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+.hypothesis/
+.dmypy.json
+dmypy.json
+
+# --- Backend runtime / local data ---------------------------------------------
+backend_fastapi/logs/
 backend_fastapi/data/
+backend_fastapi/*.jsonl
+
+# Per-user agent sandboxes, uploads, browser profiles (under data/)
+# Keep empty dirs if you add .gitkeep files:
+!**/.gitkeep
+
+# --- Node / Next.js (frontend) ------------------------------------------------
+node_modules/
+.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+.next/
+out/
+build/
+dist/
+
+coverage/
+.turbo/
+.cache/
+.parcel-cache/
+.eslintcache
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+.vercel
+
+*.tsbuildinfo
+
+# --- Playwright ---------------------------------------------------------------
+playwright-report/
+test-results/
+playwright/.cache/
+.blob-storage/
+
+# --- Docker / local tooling ---------------------------------------------------
+*.log
+
+# --- IDE / editors (optional local overrides) ---------------------------------
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# --- Cursor (local agent state; keep rules/skills if you add them later) ------
+.cursor/projects/
+.cursor/plans/

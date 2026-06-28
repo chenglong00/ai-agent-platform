@@ -8,8 +8,9 @@ from urllib.parse import urlparse
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import tool
+from playwright.async_api import Error as PlaywrightError
 
-from app.ai.chat_agent.playwright_pool import get_browser_page, release_user_browser
+from app.ai.chat_agent.playwright_pool import browser_page, release_user_browser
 from app.ai.chat_agent.run_context import get_user_id_from_run
 from app.core.config import settings
 
@@ -53,14 +54,16 @@ async def browser_goto(url: str, runtime: ToolRuntime) -> str:
         return str(exc)
 
     user_id = get_user_id_from_run(runtime)
-    page, lock = await get_browser_page(user_id)
-    async with lock:
-        try:
+    try:
+        async with browser_page(user_id) as page:
             await page.goto(target, wait_until="domcontentloaded")
             return f"Navigated successfully.\n{await _page_state_summary(page)}"
-        except Exception as exc:
-            logger.exception("browser_goto_failed user_id=%s url=%s", user_id, target)
-            return f"Navigation failed: {exc}"
+    except PlaywrightError as exc:
+        logger.exception("browser_goto_failed user_id=%s url=%s", user_id, target)
+        return f"Navigation failed: {exc}"
+    except Exception as exc:
+        logger.exception("browser_goto_failed user_id=%s url=%s", user_id, target)
+        return f"Navigation failed: {exc}"
 
 
 @tool
@@ -70,15 +73,17 @@ async def browser_read(runtime: ToolRuntime) -> str:
         return _disabled()
 
     user_id = get_user_id_from_run(runtime)
-    page, lock = await get_browser_page(user_id)
-    async with lock:
-        try:
+    try:
+        async with browser_page(user_id) as page:
             body_text = await page.locator("body").inner_text()
             excerpt = _truncate(body_text)
             return f"{await _page_state_summary(page)}\n\nVisible text:\n{excerpt}"
-        except Exception as exc:
-            logger.exception("browser_read_failed user_id=%s", user_id)
-            return f"Could not read page: {exc}"
+    except PlaywrightError as exc:
+        logger.exception("browser_read_failed user_id=%s", user_id)
+        return f"Could not read page: {exc}"
+    except Exception as exc:
+        logger.exception("browser_read_failed user_id=%s", user_id)
+        return f"Could not read page: {exc}"
 
 
 @tool
@@ -92,14 +97,16 @@ async def browser_click(selector: str, runtime: ToolRuntime) -> str:
         return "Selector is required."
 
     user_id = get_user_id_from_run(runtime)
-    page, lock = await get_browser_page(user_id)
-    async with lock:
-        try:
+    try:
+        async with browser_page(user_id) as page:
             await page.locator(sel).first.click(timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
             return f"Clicked `{sel}`.\n{await _page_state_summary(page)}"
-        except Exception as exc:
-            logger.exception("browser_click_failed user_id=%s selector=%s", user_id, sel)
-            return f"Click failed on `{sel}`: {exc}"
+    except PlaywrightError as exc:
+        logger.exception("browser_click_failed user_id=%s selector=%s", user_id, sel)
+        return f"Click failed on `{sel}`: {exc}"
+    except Exception as exc:
+        logger.exception("browser_click_failed user_id=%s selector=%s", user_id, sel)
+        return f"Click failed on `{sel}`: {exc}"
 
 
 @tool
@@ -118,18 +125,20 @@ async def browser_type(
         return "Selector is required."
 
     user_id = get_user_id_from_run(runtime)
-    page, lock = await get_browser_page(user_id)
-    async with lock:
-        try:
+    try:
+        async with browser_page(user_id) as page:
             locator = page.locator(sel).first
             await locator.fill(text, timeout=settings.BROWSER_PLAYWRIGHT_TIMEOUT_MS)
             if press_enter:
                 await locator.press("Enter")
             action = "Typed and pressed Enter" if press_enter else "Typed"
             return f"{action} into `{sel}`.\n{await _page_state_summary(page)}"
-        except Exception as exc:
-            logger.exception("browser_type_failed user_id=%s selector=%s", user_id, sel)
-            return f"Type failed on `{sel}`: {exc}"
+    except PlaywrightError as exc:
+        logger.exception("browser_type_failed user_id=%s selector=%s", user_id, sel)
+        return f"Type failed on `{sel}`: {exc}"
+    except Exception as exc:
+        logger.exception("browser_type_failed user_id=%s selector=%s", user_id, sel)
+        return f"Type failed on `{sel}`: {exc}"
 
 
 @tool
@@ -143,14 +152,16 @@ async def browser_press(key: str, runtime: ToolRuntime) -> str:
         return "Key name is required."
 
     user_id = get_user_id_from_run(runtime)
-    page, lock = await get_browser_page(user_id)
-    async with lock:
-        try:
+    try:
+        async with browser_page(user_id) as page:
             await page.keyboard.press(key_name)
             return f"Pressed {key_name}.\n{await _page_state_summary(page)}"
-        except Exception as exc:
-            logger.exception("browser_press_failed user_id=%s key=%s", user_id, key_name)
-            return f"Key press failed: {exc}"
+    except PlaywrightError as exc:
+        logger.exception("browser_press_failed user_id=%s key=%s", user_id, key_name)
+        return f"Key press failed: {exc}"
+    except Exception as exc:
+        logger.exception("browser_press_failed user_id=%s key=%s", user_id, key_name)
+        return f"Key press failed: {exc}"
 
 
 @tool
@@ -160,9 +171,8 @@ async def browser_screenshot(runtime: ToolRuntime) -> str:
         return _disabled()
 
     user_id = get_user_id_from_run(runtime)
-    page, lock = await get_browser_page(user_id)
-    async with lock:
-        try:
+    try:
+        async with browser_page(user_id) as page:
             png = await page.screenshot(type="png", full_page=False)
             encoded = base64.b64encode(png).decode("ascii")
             runtime.emit_output_delta(
@@ -173,9 +183,12 @@ async def browser_screenshot(runtime: ToolRuntime) -> str:
                 },
             )
             return f"Screenshot captured.\n{await _page_state_summary(page)}"
-        except Exception as exc:
-            logger.exception("browser_screenshot_failed user_id=%s", user_id)
-            return f"Screenshot failed: {exc}"
+    except PlaywrightError as exc:
+        logger.exception("browser_screenshot_failed user_id=%s", user_id)
+        return f"Screenshot failed: {exc}"
+    except Exception as exc:
+        logger.exception("browser_screenshot_failed user_id=%s", user_id)
+        return f"Screenshot failed: {exc}"
 
 
 @tool
