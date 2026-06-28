@@ -1,0 +1,6 @@
+# Local environment overrides (secrets, machine-specific config)
+.env.local
+.env.*.local
+
+# Uploaded knowledge base files (local dev)
+backend_fastapi/data/

@@ -30,6 +30,12 @@ export type ChatConversationListResult = {
 /** Page size for sidebar “Show more” (must match API default). */
 export const CHAT_CONVERSATIONS_PAGE_SIZE = 15;
 
+export type MessageBlockDto = {
+  type: string;
+  position: number;
+  payload: Record<string, unknown>;
+};
+
 /** Matches GET …/messages items; optional fields support older API responses. */
 export type ChatMessageDto = {
   id: string;
@@ -37,6 +43,7 @@ export type ChatMessageDto = {
   text: string;
   created_at?: string;
   content_format?: "markdown" | "plain";
+  blocks?: MessageBlockDto[];
 };
 
 export type SendMessageResult = {
@@ -174,15 +181,27 @@ export type TodoItem = {
   status: "pending" | "in_progress" | "completed"
 }
 
+export type ToolCallInfo = {
+  id: string
+  tool_name: string
+  args: Record<string, unknown>
+  status: "running" | "complete" | "error"
+  result: string | undefined
+  started_at: number | undefined
+  completed_at: number | undefined
+}
+
 export type StreamEvent =
   | { type: "start"; user_message_id: string }
   | { type: "token"; content: string }
   | { type: "subagent_start"; id: string; subagent_type: string; description: string; started_at: number }
   | { type: "subagent_token"; id: string; content: string }
   | { type: "subagent_done"; id: string; result: string; status: "complete" | "error"; completed_at: number }
+  | { type: "tool_call_start"; id: string; tool_name: string; args: Record<string, unknown>; started_at: number }
+  | { type: "tool_call_end"; id: string; tool_name: string; result: string; status: "complete" | "error"; completed_at: number }
   | { type: "todos_update"; todos: TodoItem[] }
   | { type: "interrupt"; pending_tool_calls: { tool_name: string; args: Record<string, unknown>; description: string }[] }
-  | { type: "saved"; assistant_message_id: string; assistant_text: string; interrupted: boolean }
+  | { type: "saved"; assistant_message_id: string; assistant_text: string; assistant_blocks?: MessageBlockDto[]; interrupted: boolean }
   | { type: "error"; message: string };
 
 export async function* streamChatMessage(

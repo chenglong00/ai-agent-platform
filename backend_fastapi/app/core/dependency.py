@@ -8,10 +8,9 @@ import jwt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlmodel.ext.asyncio.session import AsyncSession
-from app.schemas.user import UserResponse
 from app.core.config import settings
-
-from app.models.user import User, UserRole
+from app.modules.user.model import User, UserRole
+from app.modules.user.schema import UserResponse
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")
 

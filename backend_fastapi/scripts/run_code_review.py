@@ -1,14 +1,7 @@
-"""Standalone runner for the code_review_agent.
+"""Standalone runner for the chat deep agent.
 
 Usage:
-    python scripts/run_code_review.py <path-to-file-or-directory> [optional question]
-
-Examples:
-    python scripts/run_code_review.py app/ai/tools/math.py
-    python scripts/run_code_review.py app/api/v1/chat.py "focus on security issues"
-    python scripts/run_code_review.py app/ai/tools/ "list all files then review each one"
-
-The script must be run from the backend_fastapi/ directory so that app.* imports resolve.
+    python scripts/run_code_review.py "check whether the agent works"
 """
 
 import asyncio
@@ -20,7 +13,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from langchain_core.messages import AIMessage, HumanMessage  # noqa: E402
 
-from app.ai.agents.code_review_agent import get_code_review_agent  # noqa: E402
+from app.ai.chat_agent.graph import get_deep_agent  # noqa: E402
 
 
 def _extract_text(result: object) -> str:
@@ -45,19 +38,11 @@ def _extract_text(result: object) -> str:
 
 async def main() -> None:
     if len(sys.argv) < 2:
-        print(__doc__)
-        sys.exit(1)
+        user_message = "What's the weather in Singapore?"
+    else:
+        user_message = " ".join(sys.argv[1:])
 
-    target = sys.argv[1]
-    extra = sys.argv[2] if len(sys.argv) > 2 else ""
-
-    user_message = f"Please review: {target}"
-    if extra:
-        user_message += f"\n\nFocus: {extra}"
-
-    print(f"\n🔍  Reviewing: {target}\n{'─' * 60}")
-
-    agent = get_code_review_agent()
+    agent = get_deep_agent()
     result = await agent.ainvoke({"messages": [HumanMessage(content=user_message)]})
 
     print(_extract_text(result))

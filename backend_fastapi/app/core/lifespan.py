@@ -11,6 +11,7 @@ from fastapi import FastAPI
 from app.core.database import close_engine, init_engine, ensure_initial_owner
 from app.core.environment import is_test_env
 from app.core.logging import align_uvicorn_with_root
+from app.core.mongodb import close_mongodb, ensure_mongodb_indexes, init_mongodb
 
 
 @asynccontextmanager
@@ -21,9 +22,15 @@ async def lifespan(app: FastAPI):
     if not is_test_env():
         await init_engine()
         await ensure_initial_owner()
+        await init_mongodb()
+        try:
+            await ensure_mongodb_indexes()
+        except RuntimeError:
+            pass
 
     yield
 
     # Shutdown
     if not is_test_env():
+        await close_mongodb()
         await close_engine()

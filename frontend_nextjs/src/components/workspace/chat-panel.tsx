@@ -13,6 +13,7 @@ import {
   streamChatMessage,
   type SubagentInfo,
   type TodoItem,
+  type ToolCallInfo,
 } from "@/lib/chat"
 import { cn } from "@/lib/utils"
 
@@ -35,6 +36,7 @@ type WorkspaceChatMessage = {
   text: string
   pending?: boolean
   subagents?: SubagentInfo[]
+  toolCalls?: ToolCallInfo[]
   todos?: TodoItem[]
   interrupted?: boolean
 }
@@ -96,15 +98,24 @@ export function WorkspaceChatPanel({
       setMessages(prev => [
         ...prev,
         { id: tempUser, role: "user", text: trimmed },
-        { id: tempAssistant, role: "assistant", text: "", pending: true },
+        { id: tempAssistant, role: "assistant", text: "", pending: true, toolCalls: [] },
       ])
 
       const subagentMap = new Map<string, SubagentInfo>()
+      const toolCallMap = new Map<string, ToolCallInfo>()
       const flushSubagents = () =>
         setMessages(prev =>
           prev.map(m =>
             m.id === tempAssistant
               ? { ...m, subagents: Array.from(subagentMap.values()) }
+              : m,
+          ),
+        )
+      const flushToolCalls = () =>
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === tempAssistant
+              ? { ...m, toolCalls: Array.from(toolCallMap.values()) }
               : m,
           ),
         )
@@ -149,6 +160,28 @@ export function WorkspaceChatPanel({
                 completed_at: event.completed_at,
               })
             flushSubagents()
+          } else if (event.type === "tool_call_start") {
+            toolCallMap.set(event.id, {
+              id: event.id,
+              tool_name: event.tool_name,
+              args: event.args,
+              status: "running",
+              result: undefined,
+              started_at: event.started_at,
+              completed_at: undefined,
+            })
+            flushSync(() => flushToolCalls())
+          } else if (event.type === "tool_call_end") {
+            const tc = toolCallMap.get(event.id)
+            if (tc) {
+              toolCallMap.set(event.id, {
+                ...tc,
+                status: event.status,
+                result: event.result,
+                completed_at: event.completed_at,
+              })
+            }
+            flushToolCalls()
           } else if (event.type === "todos_update") {
             flushSync(() =>
               setMessages(prev =>
@@ -167,6 +200,7 @@ export function WorkspaceChatPanel({
                       text: event.assistant_text,
                       pending: false,
                       interrupted: event.interrupted,
+                      toolCalls: Array.from(toolCallMap.values()),
                     }
                   : m,
               ),
@@ -236,6 +270,23 @@ export function WorkspaceChatPanel({
             </div>
           ) : (
             <div key={msg.id} className="space-y-1.5">
+              {msg.toolCalls && msg.toolCalls.length > 0 ? (
+                <div className="flex flex-wrap gap-1">
+                  {msg.toolCalls.map(tc => (
+                    <span
+                      key={tc.id}
+                      className={cn(
+                        "inline-flex items-center gap-1 rounded px-2 py-0.5 font-mono text-[10px]",
+                        tc.status === "complete"
+                          ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
+                          : "bg-amber-500/10 text-amber-700 dark:text-amber-300",
+                      )}
+                    >
+                      {tc.status === "complete" ? "✓" : "⟳"} {tc.tool_name}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
               {msg.subagents && msg.subagents.length > 0 ? (
                 <div className="flex flex-wrap gap-1">
                   {msg.subagents.map(sa => (

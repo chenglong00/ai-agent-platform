@@ -52,6 +52,9 @@ class Settings(BaseSettings):
 
     DATABASE_URL: str = ""
 
+    MONGODB_URI: str = ""
+    KNOWLEDGE_BASE_UPLOAD_DIR: Path = Path("data/knowledge_base")
+
     # Initial owner (optional): set env to create an OWNER user and credentials identity on first run
     INITIAL_OWNER_EMAIL: str = ""
     INITIAL_OWNER_PASSWORD: str = ""

@@ -44,8 +44,10 @@ import {
 } from "@/lib/chat"
 import { getToken } from "@/lib/auth"
 import { cn } from "@/lib/utils"
-import type { ChatMessageDto, SubagentInfo, TodoItem } from "@/lib/chat"
+import type { ChatMessageDto, MessageBlockDto, SubagentInfo, TodoItem, ToolCallInfo } from "@/lib/chat"
 import { SubagentProgress, SynthesisIndicator } from "@/components/ai/subagent-card"
+import { ToolCallProgress } from "@/components/ai/tool-call-card"
+import { AssistantTurnContent, parseMessageBlocks } from "@/components/ai/message-blocks"
 import { TodoList } from "@/components/ai/todo-list"
 
 const CHAT_PATH = "/chat"
@@ -60,8 +62,12 @@ type ChatMessage = {
   pending?: boolean
   /** Subagents that ran during this assistant turn. */
   subagents?: SubagentInfo[]
+  /** Direct tool calls during this assistant turn. */
+  toolCalls?: ToolCallInfo[]
   /** Todo items tracked during this assistant turn. */
   todos?: TodoItem[]
+  /** Persisted structured content (from API). */
+  blocks?: MessageBlockDto[]
   interrupted?: boolean
 }
 
@@ -70,14 +76,20 @@ const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
 function rowToMessage(m: ChatMessageDto): ChatMessage {
+  const parsed = parseMessageBlocks(m.blocks)
   return {
     id: m.id,
     from: m.role,
-    text: m.text,
+    text: m.text || parsed.text,
     created_at: m.created_at,
     content_format:
       m.content_format ??
+      parsed.content_format ??
       (m.role === "assistant" ? "markdown" : "plain"),
+    blocks: m.blocks,
+    toolCalls: parsed.toolCalls.length ? parsed.toolCalls : undefined,
+    subagents: parsed.subagents.length ? parsed.subagents : undefined,
+    todos: parsed.todos.length ? parsed.todos : undefined,
   }
 }
 
@@ -269,17 +281,27 @@ function ChatPageContent() {
       setMessages(prev => [
         ...prev,
         { id: tempUserId, from: "user", text: trimmed, content_format: "plain" },
-        { id: tempAssistantId, from: "assistant", text: "", content_format: "markdown", pending: true, subagents: [], todos: [] },
+        { id: tempAssistantId, from: "assistant", text: "", content_format: "markdown", pending: true, subagents: [], toolCalls: [], todos: [] },
       ])
 
       // Local subagent map — updated as SSE events arrive, then flushed into message state.
       const subagentMap = new Map<string, SubagentInfo>()
+      const toolCallMap = new Map<string, ToolCallInfo>()
 
       const flushSubagents = () =>
         setMessages(prev =>
           prev.map(m =>
             m.id === tempAssistantId
               ? { ...m, subagents: Array.from(subagentMap.values()) }
+              : m,
+          ),
+        )
+
+      const flushToolCalls = () =>
+        setMessages(prev =>
+          prev.map(m =>
+            m.id === tempAssistantId
+              ? { ...m, toolCalls: Array.from(toolCallMap.values()) }
               : m,
           ),
         )
@@ -332,6 +354,28 @@ function ChatPageContent() {
               completed_at: event.completed_at,
             })
             flushSubagents()
+          } else if (event.type === "tool_call_start") {
+            toolCallMap.set(event.id, {
+              id: event.id,
+              tool_name: event.tool_name,
+              args: event.args,
+              status: "running",
+              result: undefined,
+              started_at: event.started_at,
+              completed_at: undefined,
+            })
+            flushSync(() => flushToolCalls())
+          } else if (event.type === "tool_call_end") {
+            const tc = toolCallMap.get(event.id)
+            if (tc) {
+              toolCallMap.set(event.id, {
+                ...tc,
+                status: event.status,
+                result: event.result,
+                completed_at: event.completed_at,
+              })
+            }
+            flushToolCalls()
           } else if (event.type === "todos_update") {
             flushSync(() =>
               setMessages(prev =>
@@ -349,9 +393,15 @@ function ChatPageContent() {
                     ...m,
                     id: event.assistant_message_id,
                     text: event.assistant_text,
+                    blocks: event.assistant_blocks,
                     pending: false,
                     interrupted: event.interrupted,
-                    subagents: Array.from(subagentMap.values()),
+                    subagents: event.assistant_blocks
+                      ? undefined
+                      : Array.from(subagentMap.values()),
+                    toolCalls: event.assistant_blocks
+                      ? undefined
+                      : Array.from(toolCallMap.values()),
                   }
                 return m
               }),
@@ -517,15 +567,24 @@ function ChatPageContent() {
                       <>
                         {messages.map(msg => {
                           const hasSubagents = !!msg.subagents?.length
+                          const hasToolCalls = !!msg.toolCalls?.length
                           const hasTodos = !!msg.todos?.length
                           const allDone = hasSubagents && msg.subagents!.every(
                             s => s.status === "complete" || s.status === "error"
                           )
                           const isActiveTurn = !!msg.pending && sending
+                          const usePersistedBlocks = !msg.pending && !!msg.blocks?.length
                           // Show thinking only when no other progress indicators are visible
-                          const showThinking = isActiveTurn && !msg.text && !hasSubagents && !hasTodos
+                          const showThinking = isActiveTurn && !msg.text && !hasSubagents && !hasToolCalls && !hasTodos
                           return (
                             <div key={msg.id}>
+                              {usePersistedBlocks ? (
+                                <AssistantTurnContent
+                                  blocks={msg.blocks}
+                                  interrupted={msg.interrupted}
+                                />
+                              ) : (
+                                <>
                               {/* Typing indicator: only while pending with no visible progress yet */}
                               {showThinking && (
                                 <div className="flex items-center gap-2 px-1 py-2 text-sm text-muted-foreground">
@@ -541,6 +600,13 @@ function ChatPageContent() {
                                   isLoading={isActiveTurn && !hasTodos}
                                   className="mb-2 mx-1"
                                 />
+                              )}
+
+                              {/* Tool call cards — appear as soon as a tool starts */}
+                              {hasToolCalls && (
+                                <div className="mb-2 space-y-2 px-1">
+                                  <ToolCallProgress toolCalls={msg.toolCalls!} />
+                                </div>
                               )}
 
                               {/* Subagent cards — appear as soon as first subagent starts */}
@@ -575,6 +641,8 @@ function ChatPageContent() {
                                     )}
                                   </MessageContent>
                                 </Message>
+                              )}
+                                </>
                               )}
                             </div>
                           )

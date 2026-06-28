@@ -8,7 +8,9 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from app.core.environment import get_environment
 from app.core.password import PASSWORD_ALGO, hash_password
-from app.models.user import AuthIdentity, AuthProvider, User, UserRole
+import app.modules.models  # noqa: F401 — register all ORM mappers before queries
+from app.modules.auth.model import AuthIdentity, AuthProvider
+from app.modules.user.model import User, UserRole
 
 logger = logging.getLogger(__name__)
 engine: AsyncEngine | None = None

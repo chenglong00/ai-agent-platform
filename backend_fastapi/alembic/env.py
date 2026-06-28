@@ -3,8 +3,7 @@ import sqlmodel
 from sqlalchemy import engine_from_config
 from sqlalchemy import pool
 from sqlmodel import SQLModel
-from app.models.user import User, AuthIdentity  # import all models
-from app.models.api_log import ApiLog
+import app.modules.models  # noqa: F401 — register all SQLModel tables
 
 from alembic import context
 from app.core.config import settings
@@ -12,6 +11,11 @@ from app.core.config import settings
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
 config = context.config
+if not settings.DATABASE_URL:
+    raise RuntimeError(
+        "DATABASE_URL is not configured. Set it in backend_fastapi/.env "
+        "(e.g. postgresql+psycopg://postgres:postgres@localhost:5432/myapp_dev)."
+    )
 config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
 
 # Interpret the config file for Python logging.

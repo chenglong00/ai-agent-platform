@@ -153,8 +153,8 @@ const data = {
   ],
   projects: [
     {
-      name: "New Project",
-      url: "#",
+      name: "Knowledge Base",
+      url: "/knowledge-base",
       icon: (
         <DatabaseIcon
         />
