@@ -16,6 +16,21 @@ logger = logging.getLogger(__name__)
 _GOOGLE_AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _STATE_MAX_AGE_SECONDS = 600
+# Lets us show which Google account was connected; MCP scopes alone cannot call userinfo.
+_IDENTITY_SCOPES = (
+    "openid",
+    "https://www.googleapis.com/auth/userinfo.email",
+)
+
+
+def _merged_oauth_scopes(scopes: tuple[str, ...]) -> str:
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for scope in (*_IDENTITY_SCOPES, *scopes):
+        if scope not in seen:
+            seen.add(scope)
+            ordered.append(scope)
+    return " ".join(ordered)
 
 
 def _serializer() -> URLSafeTimedSerializer:
@@ -49,7 +64,7 @@ def build_google_authorize_url(*, connector_id: str, scopes: tuple[str, ...], st
         "client_id": settings.GOOGLE_CLIENT_ID,
         "redirect_uri": redirect_uri,
         "response_type": "code",
-        "scope": " ".join(scopes),
+        "scope": _merged_oauth_scopes(scopes),
         "state": state,
         "access_type": "offline",
         "prompt": "consent",

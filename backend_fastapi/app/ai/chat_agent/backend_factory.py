@@ -109,6 +109,83 @@ def _home_base_dir() -> str:
     return settings.DEEP_AGENT_SANDBOX_HOME_ROOT.rstrip("/") or "/home"
 
 
+def _sandbox_state_name(raw_sandbox: Any) -> str:
+    state = getattr(raw_sandbox, "state", None)
+    if state is None:
+        return ""
+    value = getattr(state, "value", state)
+    return str(value).lower()
+
+
+def _is_daytona_sandbox_running(raw_sandbox: Any) -> bool:
+    return _sandbox_state_name(raw_sandbox) == "started"
+
+
+def _ensure_daytona_sandbox_started(client: Any, raw_sandbox: Any) -> Any:
+    """Start a stopped sandbox and wait until the container has an IP."""
+    sandbox_id = str(getattr(raw_sandbox, "id", raw_sandbox))
+    state = _sandbox_state_name(raw_sandbox)
+    if state == "started":
+        return raw_sandbox
+
+    if state in {"error", "destroyed", "destroying", "build_failed"}:
+        raise RuntimeError(
+            f"Daytona sandbox {sandbox_id} is unavailable (state={state})"
+        )
+
+    if state in {"stopped", "paused", "archived"}:
+        logger.info("daytona_sandbox_starting sandbox_id=%s state=%s", sandbox_id, state)
+        if hasattr(raw_sandbox, "start"):
+            raw_sandbox.start()
+        else:
+            raise RuntimeError(f"Daytona sandbox {sandbox_id} cannot be started (state={state})")
+    elif state in {"starting", "restoring", "creating", "resuming", "pulling_snapshot"}:
+        logger.info("daytona_sandbox_waiting sandbox_id=%s state=%s", sandbox_id, state)
+    else:
+        logger.info(
+            "daytona_sandbox_waiting sandbox_id=%s state=%s (unexpected)",
+            sandbox_id,
+            state or "unknown",
+        )
+
+    timeout_s = max(settings.DAYTONA_START_TIMEOUT_SECONDS, 10)
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        raw_sandbox = client.get(sandbox_id)
+        state = _sandbox_state_name(raw_sandbox)
+        if state == "started":
+            logger.info("daytona_sandbox_ready sandbox_id=%s", sandbox_id)
+            return raw_sandbox
+        if state in {"error", "destroyed", "destroying", "build_failed"}:
+            raise RuntimeError(
+                f"Daytona sandbox {sandbox_id} failed to start (state={state})"
+            )
+        time.sleep(2)
+
+    raise RuntimeError(
+        f"Daytona sandbox {sandbox_id} did not start within {timeout_s}s "
+        f"(last state={state or 'unknown'})"
+    )
+
+
+def _daytona_create_params() -> Any | None:
+    auto_stop = settings.DAYTONA_AUTO_STOP_MINUTES
+    if auto_stop <= 0:
+        return None
+    from daytona import CreateSandboxFromSnapshotParams
+
+    return CreateSandboxFromSnapshotParams(auto_stop_interval=auto_stop)
+
+
+def _attach_daytona_sandbox(client: Any, raw_sandbox: Any) -> tuple[Any, SandboxBackendProtocol]:
+    raw_sandbox = _ensure_daytona_sandbox_started(client, raw_sandbox)
+    from langchain_daytona import DaytonaSandbox
+
+    inner = DaytonaSandbox(sandbox=raw_sandbox)
+    _prepare_shared_sandbox_dirs(inner)
+    return raw_sandbox, inner
+
+
 def _prepare_shared_sandbox_dirs(inner: SandboxBackendProtocol) -> None:
     """Ensure /home (or configured root) is writable for all sandbox users."""
     base = _home_base_dir()

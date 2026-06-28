@@ -118,7 +118,10 @@ class ConnectorService:
         if not access_token:
             raise HTTPException(status_code=400, detail="Missing access token")
 
-        account_email = await connector_auth_manager.fetch_google_account_email(access_token)
+        account_email = await connector_auth_manager.fetch_google_account_email(
+            access_token,
+            token_payload=token_payload,
+        )
         row = await connector_auth_manager.upsert_tokens(
             session,
             user_id=UUID(user_id_str),

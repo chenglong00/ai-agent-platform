@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import base64
+import json
 import logging
 from datetime import timedelta
 from uuid import UUID
@@ -20,6 +22,29 @@ logger = logging.getLogger(__name__)
 _TOKEN_REFRESH_SKEW = timedelta(minutes=2)
 _GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 _GOOGLE_USERINFO_URL = "https://www.googleapis.com/oauth2/v3/userinfo"
+
+
+def extract_google_account_email(token_payload: dict) -> str | None:
+    """Best-effort email from OAuth token response (id_token or userinfo)."""
+    email = _email_from_id_token(token_payload.get("id_token"))
+    if email:
+        return email
+    return None
+
+
+def _email_from_id_token(id_token: str | None) -> str | None:
+    if not id_token or not isinstance(id_token, str):
+        return None
+    parts = id_token.split(".")
+    if len(parts) < 2:
+        return None
+    try:
+        padding = "=" * (-len(parts[1]) % 4)
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + padding))
+    except (json.JSONDecodeError, ValueError):
+        return None
+    email = payload.get("email")
+    return str(email) if email else None
 
 
 class ConnectorAuthManager:
@@ -121,16 +146,32 @@ class ConnectorAuthManager:
         await session.commit()
         return row.access_token
 
-    async def fetch_google_account_email(self, access_token: str) -> str | None:
+    async def fetch_google_account_email(
+        self,
+        access_token: str,
+        *,
+        token_payload: dict | None = None,
+    ) -> str | None:
+        if token_payload:
+            email = extract_google_account_email(token_payload)
+            if email:
+                return email
+
         try:
             async with httpx.AsyncClient(timeout=15.0) as client:
                 resp = await client.get(
                     _GOOGLE_USERINFO_URL,
                     headers={"Authorization": f"Bearer {access_token}"},
                 )
+                if resp.status_code == 401:
+                    logger.debug("connector_userinfo_unauthorized (missing openid/email scope)")
+                    return None
                 resp.raise_for_status()
                 payload = resp.json()
                 return payload.get("email")
+        except httpx.HTTPStatusError as exc:
+            logger.debug("connector_userinfo_failed status=%s", exc.response.status_code)
+            return None
         except Exception:
             logger.warning("connector_userinfo_failed", exc_info=True)
             return None
