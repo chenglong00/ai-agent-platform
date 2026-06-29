@@ -94,6 +94,8 @@ class Settings(BaseSettings):
 
     # Enterprise connectors (Google Workspace MCP servers)
     CONNECTORS_ENABLED: bool = True
+    # User-registered A2A subagents (SubAgent page)
+    SUBAGENTS_ENABLED: bool = True
     # OAuth callback for connector authorization (add to Google Cloud redirect URIs).
     CONNECTOR_OAUTH_REDIRECT_URI: str = ""
     # Frontend page to return to after connector OAuth (e.g. http://localhost:3000/connector).

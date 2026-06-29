@@ -13,6 +13,10 @@ from app.ai.chat_agent.connector_tools import (
     call_connector_mcp_tool,
     list_connected_connectors,
 )
+from app.ai.chat_agent.subagent_tools import (
+    call_subagent,
+    list_registered_subagents,
+)
 from app.ai.chat_agent.knowledge_base_tools import search_knowledge_base
 from app.ai.chat_agent.memory_tools import (
     list_user_memories,
@@ -59,6 +63,11 @@ If connected, call call_connector_mcp_tool with connector_id, MCP tool name, and
 Google Calendar list_events uses startTime/endTime/pageSize (not timeMin/timeMax from the REST API).
 Review MCP results before answering; never invent calendar events or file contents."""
 
+_SYSTEM_PROMPT_SUBAGENTS = """
+When the user's request matches a registered subagent's skills or description, call list_registered_subagents first.
+If a suitable subagent exists, call call_subagent with its id and a clear task message.
+Summarize the subagent's reply for the user; do not invent subagent output."""
+
 
 def _system_prompt() -> str:
     parts = [_SYSTEM_PROMPT_BASE]
@@ -70,6 +79,8 @@ def _system_prompt() -> str:
         parts.append(_SYSTEM_PROMPT_MEMORY)
     if settings.CONNECTORS_ENABLED:
         parts.append(_SYSTEM_PROMPT_CONNECTORS)
+    if settings.SUBAGENTS_ENABLED:
+        parts.append(_SYSTEM_PROMPT_SUBAGENTS)
     parts.append("\nSummarize tool results briefly for the user.")
     return "\n".join(parts)
 
@@ -84,6 +95,8 @@ def _agent_tools() -> list:
         tools.extend([save_user_memory, search_user_memories, list_user_memories])
     if settings.CONNECTORS_ENABLED:
         tools.extend([list_connected_connectors, call_connector_mcp_tool])
+    if settings.SUBAGENTS_ENABLED:
+        tools.extend([list_registered_subagents, call_subagent])
     if settings.BROWSER_PLAYWRIGHT_ENABLED:
         tools.extend(PLAYWRIGHT_BROWSER_TOOLS)
     return tools
