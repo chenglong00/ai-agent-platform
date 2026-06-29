@@ -15,10 +15,27 @@ from app.core.config import settings
 from app.core.db.postgres import get_async_session_factory
 from app.modules.connector.auth_manager import connector_auth_manager
 from app.modules.connector.catalog import get_connector_definition
-from app.modules.connector.mcp_client import RemoteMcpClient
+from app.modules.connector.mcp_client import McpClientError, RemoteMcpClient
 from app.modules.connector.model import UserConnector
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_tool_arguments(raw: object) -> dict[str, object]:
+    """Accept JSON object strings (including double-encoded) from the LLM."""
+    if raw is None or raw == "":
+        return {}
+    if isinstance(raw, dict):
+        return raw
+    if not isinstance(raw, str):
+        raise ValueError("arguments_json must be a JSON object string.")
+
+    parsed: object = json.loads(raw)
+    if isinstance(parsed, str):
+        parsed = json.loads(parsed)
+    if not isinstance(parsed, dict):
+        raise ValueError("arguments_json must decode to a JSON object.")
+    return parsed
 
 
 async def _enabled_connectors(user_id: UUID) -> list[UserConnector]:
@@ -77,10 +94,8 @@ async def call_connector_mcp_tool(
         return f"Unknown connector_id: {connector_id}"
 
     try:
-        arguments = json.loads(arguments_json or "{}")
-        if not isinstance(arguments, dict):
-            return "arguments_json must decode to a JSON object."
-    except json.JSONDecodeError as exc:
+        arguments = _parse_tool_arguments(arguments_json)
+    except (json.JSONDecodeError, ValueError) as exc:
         return f"Invalid arguments_json: {exc}"
 
     try:
@@ -95,6 +110,14 @@ async def call_connector_mcp_tool(
             client = RemoteMcpClient(mcp_url=definition.mcp_url, access_token=access_token)
             result = await client.call_tool(tool_name, arguments)
         return json.dumps(result, default=str)[:12000]
+    except McpClientError as exc:
+        logger.warning(
+            "call_connector_mcp_tool_mcp_error connector=%s tool=%s error=%s",
+            connector_id,
+            tool_name,
+            exc,
+        )
+        return f"MCP tool error: {exc}"
     except Exception as exc:
         logger.exception("call_connector_mcp_tool_failed connector=%s tool=%s", connector_id, tool_name)
         return f"MCP tool call failed: {exc}"

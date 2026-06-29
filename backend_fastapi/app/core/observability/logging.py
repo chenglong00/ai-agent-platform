@@ -57,7 +57,7 @@ _LEVEL_COLORS = {
 }
 
 # Libraries that become very noisy at DEBUG when root is DEBUG
-_NOISY_LIB_LOGGERS = ("httpcore", "httpx", "h11", "asyncio", "pymongo")
+_NOISY_LIB_LOGGERS = ("httpcore", "httpx", "h11", "asyncio", "pymongo", "grpc")
 
 # Uvicorn loggers to merge into root formatting (see ``align_uvicorn_with_root``)
 _UVICORN_PROPAGATE = ("uvicorn", "uvicorn.error", "uvicorn.asgi")

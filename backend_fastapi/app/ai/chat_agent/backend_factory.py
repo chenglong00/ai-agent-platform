@@ -99,7 +99,10 @@ def _pick_existing_daytona_sandbox(client: Any) -> Any | None:
     if not sandboxes:
         return None
     for sb in sandboxes:
-        state = str(getattr(sb, "state", "") or "").lower()
+        if _is_daytona_sandbox_running(sb):
+            return sb
+    for sb in sandboxes:
+        state = _sandbox_state_name(sb)
         if "start" in state or state in {"", "running", "active"}:
             return sb
     return sandboxes[0]
@@ -122,11 +125,10 @@ def _is_daytona_sandbox_running(raw_sandbox: Any) -> bool:
 
 
 def _ensure_daytona_sandbox_started(client: Any, raw_sandbox: Any) -> Any:
-    """Start a stopped sandbox and wait until the container has an IP."""
+    """Start a stopped sandbox and wait until commands can run (container IP ready)."""
     sandbox_id = str(getattr(raw_sandbox, "id", raw_sandbox))
+    raw_sandbox = client.get(sandbox_id)
     state = _sandbox_state_name(raw_sandbox)
-    if state == "started":
-        return raw_sandbox
 
     if state in {"error", "destroyed", "destroying", "build_failed"}:
         raise RuntimeError(
@@ -139,33 +141,82 @@ def _ensure_daytona_sandbox_started(client: Any, raw_sandbox: Any) -> Any:
             raw_sandbox.start()
         else:
             raise RuntimeError(f"Daytona sandbox {sandbox_id} cannot be started (state={state})")
-    elif state in {"starting", "restoring", "creating", "resuming", "pulling_snapshot"}:
+    elif state not in {"started"}:
         logger.info("daytona_sandbox_waiting sandbox_id=%s state=%s", sandbox_id, state)
-    else:
-        logger.info(
-            "daytona_sandbox_waiting sandbox_id=%s state=%s (unexpected)",
-            sandbox_id,
-            state or "unknown",
-        )
+
+    _apply_daytona_autostop(raw_sandbox)
 
     timeout_s = max(settings.DAYTONA_START_TIMEOUT_SECONDS, 10)
     deadline = time.monotonic() + timeout_s
+    last_error: Exception | None = None
+
     while time.monotonic() < deadline:
         raw_sandbox = client.get(sandbox_id)
         state = _sandbox_state_name(raw_sandbox)
-        if state == "started":
-            logger.info("daytona_sandbox_ready sandbox_id=%s", sandbox_id)
-            return raw_sandbox
         if state in {"error", "destroyed", "destroying", "build_failed"}:
             raise RuntimeError(
                 f"Daytona sandbox {sandbox_id} failed to start (state={state})"
             )
-        time.sleep(2)
+        if state != "started":
+            time.sleep(2)
+            continue
 
-    raise RuntimeError(
-        f"Daytona sandbox {sandbox_id} did not start within {timeout_s}s "
-        f"(last state={state or 'unknown'})"
+        try:
+            _probe_daytona_sandbox(raw_sandbox)
+            logger.info("daytona_sandbox_ready sandbox_id=%s", sandbox_id)
+            return raw_sandbox
+        except Exception as exc:
+            last_error = exc
+            if _is_daytona_not_ready_error(exc):
+                logger.info(
+                    "daytona_sandbox_warming sandbox_id=%s error=%s",
+                    sandbox_id,
+                    exc,
+                )
+                time.sleep(2)
+                continue
+            raise
+
+    message = f"Daytona sandbox {sandbox_id} did not become ready within {timeout_s}s"
+    if last_error is not None:
+        raise RuntimeError(message) from last_error
+    raise RuntimeError(message)
+
+
+def _is_daytona_not_ready_error(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return (
+        "no ip address" in text
+        or "is the sandbox started" in text
+        or "failed to create session" in text
+        or "failed to resolve container ip" in text
     )
+
+
+def _probe_daytona_sandbox(raw_sandbox: Any) -> None:
+    from langchain_daytona import DaytonaSandbox
+
+    inner = DaytonaSandbox(sandbox=raw_sandbox)
+    result = inner.execute("echo daytona_ready")
+    if result.exit_code != 0:
+        raise RuntimeError(result.output or "Daytona readiness probe failed")
+
+
+def _apply_daytona_autostop(raw_sandbox: Any) -> None:
+    """Extend idle auto-stop on the shared VM (minutes; 0 disables auto-stop)."""
+    interval = settings.DAYTONA_AUTO_STOP_MINUTES
+    if interval < 0:
+        return
+    try:
+        if hasattr(raw_sandbox, "set_autostop_interval"):
+            raw_sandbox.set_autostop_interval(interval)
+            logger.info(
+                "daytona_autostop_interval sandbox_id=%s minutes=%s",
+                getattr(raw_sandbox, "id", raw_sandbox),
+                interval,
+            )
+    except Exception:
+        logger.exception("daytona_autostop_interval_failed")
 
 
 def _daytona_create_params() -> Any | None:
@@ -189,21 +240,40 @@ def _attach_daytona_sandbox(client: Any, raw_sandbox: Any) -> tuple[Any, Sandbox
 def _prepare_shared_sandbox_dirs(inner: SandboxBackendProtocol) -> None:
     """Ensure /home (or configured root) is writable for all sandbox users."""
     base = _home_base_dir()
-    inner.execute(ensure_directory_command(base))
+    command = ensure_directory_command(base)
+    last_error: Exception | None = None
+    for attempt in range(3):
+        try:
+            inner.execute(command)
+            return
+        except Exception as exc:
+            last_error = exc
+            if attempt < 2 and _is_daytona_not_ready_error(exc):
+                logger.info("daytona_prepare_dirs_retry attempt=%s", attempt + 1)
+                time.sleep(2)
+                continue
+            raise
+    if last_error is not None:
+        raise last_error
 
 
 def _get_or_create_shared_daytona() -> SandboxBackendProtocol:
     """Return the single shared Daytona backend (creates one VM if needed)."""
     global _shared_daytona
     with _shared_daytona_lock:
-        if _shared_daytona is not None:
-            return _shared_daytona.inner_backend
-
         _apply_sandbox_env()
         from daytona import Daytona
-        from langchain_daytona import DaytonaSandbox
 
         client = Daytona()
+
+        if _shared_daytona is not None:
+            raw_sandbox, inner = _attach_daytona_sandbox(client, _shared_daytona.raw_sandbox)
+            _shared_daytona = _SharedDaytonaEntry(
+                raw_sandbox=raw_sandbox,
+                inner_backend=inner,
+            )
+            return inner
+
         sandbox_id = settings.DAYTONA_SANDBOX_ID.strip()
         if sandbox_id:
             raw_sandbox = client.get(sandbox_id)
@@ -219,7 +289,12 @@ def _get_or_create_shared_daytona() -> SandboxBackendProtocol:
                     sandbox_id,
                 )
             else:
-                raw_sandbox = client.create()
+                create_params = _daytona_create_params()
+                raw_sandbox = (
+                    client.create(create_params)
+                    if create_params is not None
+                    else client.create()
+                )
                 sandbox_id = str(getattr(raw_sandbox, "id", raw_sandbox))
                 logger.info(
                     "deep_agent_daytona_created sandbox_id=%s "
@@ -228,8 +303,7 @@ def _get_or_create_shared_daytona() -> SandboxBackendProtocol:
                     sandbox_id,
                 )
 
-        inner = DaytonaSandbox(sandbox=raw_sandbox)
-        _prepare_shared_sandbox_dirs(inner)
+        raw_sandbox, inner = _attach_daytona_sandbox(client, raw_sandbox)
         _shared_daytona = _SharedDaytonaEntry(
             raw_sandbox=raw_sandbox,
             inner_backend=inner,

@@ -10,7 +10,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 
 from app.modules.connector.auth_manager import connector_auth_manager
 from app.modules.connector.catalog import get_connector_definition, list_connector_definitions
-from app.modules.connector.mcp_client import RemoteMcpClient
+from app.modules.connector.mcp_client import McpClientError, RemoteMcpClient
 from app.modules.connector.model import UserConnector
 from app.modules.connector.oauth_flow import (
     build_google_authorize_url,
@@ -192,6 +192,12 @@ class ConnectorService:
         client = RemoteMcpClient(mcp_url=definition.mcp_url, access_token=access_token)
         try:
             tools = await client.list_tools()
+        except McpClientError as exc:
+            row = await self._get_row(session, user_id, connector_id)
+            if row is not None:
+                row.last_error = str(exc)[:500]
+                await session.commit()
+            raise HTTPException(status_code=502, detail=f"MCP request failed: {exc}") from exc
         except Exception as exc:
             row = await self._get_row(session, user_id, connector_id)
             if row is not None:

@@ -129,8 +129,8 @@ class Settings(BaseSettings):
     DAYTONA_DELETE_ON_SHUTDOWN: bool = False
     # Max seconds to wait for a stopped Daytona VM to become reachable.
     DAYTONA_START_TIMEOUT_SECONDS: int = 120
-    # Idle minutes before Daytona auto-stops the VM (0 = never). Applies to newly created sandboxes.
-    DAYTONA_AUTO_STOP_MINUTES: int = 60
+    # Idle minutes before Daytona auto-stops the VM (0 = never). Applies on attach + new sandboxes.
+    DAYTONA_AUTO_STOP_MINUTES: int = 120
 
     # Playwright browser tools (per-user pooled Chromium sessions)
     BROWSER_PLAYWRIGHT_ENABLED: bool = False

@@ -15,7 +15,7 @@ from sqlmodel.ext.asyncio.session import AsyncSession
 from app.core.config import settings
 from app.core.security.oauth import is_google_oauth_configured
 from app.modules.connector.model import UserConnector
-from app.utils.datetime import now_utc
+from app.utils.datetime import as_utc_aware, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,8 @@ class ConnectorAuthManager:
         if row.token_expires_at is None:
             return row.access_token
 
-        if row.token_expires_at > now_utc() + _TOKEN_REFRESH_SKEW:
+        expires_at = as_utc_aware(row.token_expires_at)
+        if expires_at > now_utc() + _TOKEN_REFRESH_SKEW:
             return row.access_token
 
         if not row.refresh_token:
