@@ -14,7 +14,6 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import { loginWithPassword, oauthUrls } from "@/lib/api";
-import { setToken } from "@/lib/auth";
 
 export function LoginForm({
   className,
@@ -24,7 +23,6 @@ export function LoginForm({
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  // Use dummy auth only when explicitly enabled (e.g. for demos); otherwise use FastAPI backend
   const useDummyAuth =
     process.env.NEXT_PUBLIC_USE_DUMMY_AUTH === "true" ||
     process.env.NEXT_PUBLIC_USE_DUMMY_AUTH === "1";
@@ -45,7 +43,6 @@ export function LoginForm({
           setLoading(false);
           return;
         }
-        setToken("dummy-token");
         router.push("/dashboard");
         router.refresh();
         return;
@@ -57,7 +54,6 @@ export function LoginForm({
         setLoading(false);
         return;
       }
-      setToken(result.accessToken);
       router.push("/dashboard");
       router.refresh();
     } catch {

@@ -1,20 +1,24 @@
 """JWT authentication dependencies for protected routes."""
 
 from typing import Annotated
-from uuid import UUID
 
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import OAuth2PasswordBearer
 from sqlmodel.ext.asyncio.session import AsyncSession
+from uuid import UUID
 
 from app.core.config import settings
 from app.core.observability.logging import user_id_ctx
 from app.core.security.dependencies import get_db
+from app.modules.auth.cookies import get_access_token_from_request
 from app.modules.user.model import User
 from app.modules.user.schema import UserResponse
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/auth/token")
+oauth2_scheme = OAuth2PasswordBearer(
+    tokenUrl=f"{settings.API_V1_STR}/auth/token",
+    auto_error=False,
+)
 
 
 def _decode_token_payload(token: str) -> dict:
@@ -49,10 +53,26 @@ async def get_user_from_token(session: AsyncSession, token: str) -> UserResponse
     return UserResponse.model_validate(user)
 
 
+def _resolve_access_token(request: Request, bearer_token: str | None) -> str:
+    token = bearer_token or get_access_token_from_request(request)
+    if not token:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return token
+
+
+async def get_access_token_string(
+    request: Request,
+    bearer_token: Annotated[str | None, Depends(oauth2_scheme)] = None,
+) -> str:
+    """Return raw access JWT from Authorization header or cookie."""
+    return _resolve_access_token(request, bearer_token)
+
+
 async def get_current_user(
+    request: Request,
     session: Annotated[AsyncSession, Depends(get_db)],
-    token: str = Depends(oauth2_scheme),
+    bearer_token: Annotated[str | None, Depends(oauth2_scheme)] = None,
 ) -> UserResponse:
-    """Validate Bearer JWT and return the current User. Raises 401 if missing or invalid.
-    Supports key rotation: verifies with SECRET_KEY first, then SECRET_KEY_PREVIOUS if set."""
+    """Validate JWT from Authorization header or access_token cookie."""
+    token = _resolve_access_token(request, bearer_token)
     return await get_user_from_token(session, token)

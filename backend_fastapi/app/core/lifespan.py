@@ -11,6 +11,7 @@ from fastapi import FastAPI
 
 from app.core.db.postgres import close_engine, init_engine
 from app.core.environment import is_test_env
+from app.core.observability.langfuse import flush_langfuse, init_langfuse
 from app.core.observability.logging import align_uvicorn_with_root
 from app.ai.chat_agent.backend_factory import (
     shutdown_all_sandboxes,
@@ -28,6 +29,7 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown. Add DB connect, logging, etc. above yield; cleanup below."""
     align_uvicorn_with_root()
     if not is_test_env():
+        init_langfuse()
         await init_engine()
         await ensure_initial_owner()
         await init_mongodb()
@@ -37,6 +39,7 @@ async def lifespan(app: FastAPI):
     yield
 
     if not is_test_env():
+        flush_langfuse()
         await stop_workflow_scheduler()
         await stop_sandbox_cleanup_loop()
         await shutdown_all_browsers()

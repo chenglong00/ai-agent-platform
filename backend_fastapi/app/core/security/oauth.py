@@ -11,11 +11,9 @@ def get_oauth(request: Request):
     return request.app.state.oauth
 
 
-def build_auth_success_redirect_url(token: str) -> str:
-    """Build the URL to redirect to after successful OAuth login, with the JWT appended as query param."""
-    base = settings.AUTH_SUCCESS_REDIRECT_URL or "/"
-    sep = "&" if "?" in base else "?"
-    return f"{base}{sep}token={token}"
+def build_auth_success_redirect_url() -> str:
+    """Build the URL to redirect to after successful OAuth login (auth cookies are set on the response)."""
+    return settings.AUTH_SUCCESS_REDIRECT_URL or "/dashboard"
 
 
 def is_google_oauth_configured() -> bool:

@@ -2,22 +2,28 @@
 
 import { useLayoutEffect, useState } from "react"
 import { useRouter } from "next/navigation"
-import { getToken } from "@/lib/auth"
+import { fetchCurrentUser } from "@/lib/api"
 
 /**
- * Gates children until a JWT is present in localStorage, then redirects guests to `/login`.
- * Use in a route-group layout for pages that require sign-in (JWT is client-only, so this is client-side).
+ * Gates children until the session cookie validates via /auth/me.
  */
 export function RequireAuth({ children }: { children: React.ReactNode }) {
   const router = useRouter()
   const [allowed, setAllowed] = useState(false)
 
   useLayoutEffect(() => {
-    if (!getToken()) {
-      router.replace("/login")
-      return
+    let cancelled = false
+    void fetchCurrentUser().then(result => {
+      if (cancelled) return
+      if (!result.user) {
+        router.replace("/login")
+        return
+      }
+      setAllowed(true)
+    })
+    return () => {
+      cancelled = true
     }
-    setAllowed(true)
   }, [router])
 
   if (!allowed) {

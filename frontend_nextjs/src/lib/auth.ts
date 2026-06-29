@@ -1,27 +1,35 @@
 "use client";
 
-import { authTokenKey } from "./api";
+import {
+  fetchCurrentUser,
+  fetchWsToken,
+  logoutSession,
+  refreshSession,
+} from "./api";
 
+/** @deprecated Session uses httpOnly cookies; returns null. Use fetchCurrentUser() instead. */
 export function getToken(): string | null {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem(authTokenKey);
+  return null;
 }
 
-export function setToken(token: string): void {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(authTokenKey, token);
+/** @deprecated No-op; tokens are httpOnly cookies set by the backend. */
+export function setToken(_token: string): void {}
+
+/** @deprecated No-op; tokens are httpOnly cookies. */
+export function clearToken(): void {}
+
+export async function isAuthenticated(): Promise<boolean> {
+  const result = await fetchCurrentUser();
+  return !!result.user;
 }
 
-export function clearToken(): void {
-  if (typeof window === "undefined") return;
-  localStorage.removeItem(authTokenKey);
+export async function getWsToken(): Promise<string | null> {
+  return fetchWsToken();
 }
 
-export function isAuthenticated(): boolean {
-  return !!getToken();
+/** Revoke refresh token server-side and clear auth cookies. */
+export async function logout(): Promise<void> {
+  await logoutSession();
 }
 
-/** Clear stored JWT. Call then redirect to `/login` (no server session for stateless JWT). */
-export function logout(): void {
-  clearToken();
-}
+export { refreshSession, fetchCurrentUser };

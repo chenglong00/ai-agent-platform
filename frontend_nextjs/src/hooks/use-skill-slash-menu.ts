@@ -11,7 +11,6 @@ import {
   useState,
 } from "react";
 
-import { getToken } from "@/lib/auth";
 import {
   fetchAllAvailableSkills,
   type SkillSummary,
@@ -74,14 +73,9 @@ export function useSkillSlashMenu({
 
   useEffect(() => {
     if (!enabled) return;
-    const token = getToken();
-    if (!token) {
-      setSkillsLoading(false);
-      return;
-    }
     let cancelled = false;
     setSkillsLoading(true);
-    void fetchAllAvailableSkills(token)
+    void fetchAllAvailableSkills()
       .then(list => {
         if (!cancelled) setSkills(list);
       })

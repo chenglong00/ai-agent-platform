@@ -30,7 +30,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Switch } from "@/components/ui/switch"
-import { getToken } from "@/lib/auth"
 import {
   beginConnectorOAuth,
   connectorIconId,
@@ -83,12 +82,10 @@ export default function ConnectorPage() {
   }, [searchParams])
 
   const loadConnectors = useCallback(async () => {
-    const token = getToken()
-    if (!token) return
     setLoading(true)
     setError(null)
     try {
-      setItems(await fetchConnectors(token))
+      setItems(await fetchConnectors())
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load connectors")
     } finally {
@@ -105,12 +102,10 @@ export default function ConnectorPage() {
   }, [oauthNotice])
 
   async function handleConnect(connectorId: string) {
-    const token = getToken()
-    if (!token) return
     setBusyId(connectorId)
     setError(null)
     try {
-      const url = await beginConnectorOAuth(token, connectorId)
+      const url = await beginConnectorOAuth(undefined, connectorId)
       window.location.href = url
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not start OAuth")
@@ -119,12 +114,10 @@ export default function ConnectorPage() {
   }
 
   async function handleDisconnect(connectorId: string) {
-    const token = getToken()
-    if (!token) return
     setBusyId(connectorId)
     setError(null)
     try {
-      await disconnectConnector(token, connectorId)
+      await disconnectConnector(undefined, connectorId)
       setToolsById(prev => {
         const next = { ...prev }
         delete next[connectorId]
@@ -139,12 +132,10 @@ export default function ConnectorPage() {
   }
 
   async function handleToggle(connectorId: string, enabled: boolean) {
-    const token = getToken()
-    if (!token) return
     setBusyId(connectorId)
     setError(null)
     try {
-      await updateConnectorEnabled(token, connectorId, enabled)
+      await updateConnectorEnabled(undefined, connectorId, enabled)
       await loadConnectors()
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not update connector")
@@ -154,12 +145,10 @@ export default function ConnectorPage() {
   }
 
   async function handleListTools(connectorId: string) {
-    const token = getToken()
-    if (!token) return
     setBusyId(connectorId)
     setError(null)
     try {
-      const tools = await fetchConnectorTools(token, connectorId)
+      const tools = await fetchConnectorTools(undefined, connectorId)
       setToolsById(prev => ({ ...prev, [connectorId]: tools }))
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not list MCP tools")

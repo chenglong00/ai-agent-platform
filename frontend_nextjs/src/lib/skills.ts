@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, authorizedFetch, parseApiErrorMessage } from "./api";
 import {
   defaultDocumentAccess,
   visibilityLabel,
@@ -49,43 +49,32 @@ export type CreateSkillRequest = {
 
 export type UpdateSkillRequest = Partial<CreateSkillRequest>;
 
-function authHeaders(accessToken: string, json = true): HeadersInit {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken.trim()}`,
-  };
-  if (json) headers["Content-Type"] = "application/json";
-  return headers;
+function jsonHeaders(includeBody = true): HeadersInit {
+  return includeBody ? { "Content-Type": "application/json" } : {};
 }
 
 export async function fetchSkillOptions(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<SkillOptions> {
-  const res = await fetch(`${skillsBase}/options`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(`${skillsBase}/options`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillOptions>;
 }
 
 export async function fetchBuiltinSkills(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<SkillSummary[]> {
-  const res = await fetch(`${skillsBase}/builtins`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(`${skillsBase}/builtins`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillSummary[]>;
 }
 
 export async function fetchBuiltinSkill(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   slug: string,
 ): Promise<SkillDetail> {
-  const res = await fetch(`${skillsBase}/builtins/${encodeURIComponent(slug)}`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
+  const res = await authorizedFetch(`${skillsBase}/builtins/${encodeURIComponent(slug)}`, {
+    method: "GET",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillDetail>;
@@ -103,19 +92,16 @@ export function formatAgentSkillView(
 }
 
 export async function fetchSkills(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<SkillSummary[]> {
-  const res = await fetch(`${skillsBase}`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(`${skillsBase}`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillSummary[]>;
 }
 
 /** Built-in skills plus enabled custom skills (for slash-command autocomplete). */
 export async function fetchAllAvailableSkills(
-  accessToken: string,
+  accessToken?: string | null,
 ): Promise<SkillSummary[]> {
   const [builtins, custom] = await Promise.all([
     fetchBuiltinSkills(accessToken),
@@ -125,54 +111,49 @@ export async function fetchAllAvailableSkills(
 }
 
 export async function fetchSkill(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   skillId: string,
 ): Promise<SkillDetail> {
-  const res = await fetch(`${skillsBase}/${encodeURIComponent(skillId)}`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
+  const res = await authorizedFetch(`${skillsBase}/${encodeURIComponent(skillId)}`, {
+    method: "GET",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillDetail>;
 }
 
 export async function createSkill(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   body: CreateSkillRequest,
 ): Promise<SkillDetail> {
-  const res = await fetch(`${skillsBase}`, {
+  const res = await authorizedFetch(`${skillsBase}`, {
     method: "POST",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify(body),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillDetail>;
 }
 
 export async function updateSkill(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   skillId: string,
   body: UpdateSkillRequest,
 ): Promise<SkillDetail> {
-  const res = await fetch(`${skillsBase}/${encodeURIComponent(skillId)}`, {
+  const res = await authorizedFetch(`${skillsBase}/${encodeURIComponent(skillId)}`, {
     method: "PATCH",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify(body),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<SkillDetail>;
 }
 
 export async function deleteSkill(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   skillId: string,
 ): Promise<{ id: string; deleted: boolean }> {
-  const res = await fetch(`${skillsBase}/${encodeURIComponent(skillId)}`, {
+  const res = await authorizedFetch(`${skillsBase}/${encodeURIComponent(skillId)}`, {
     method: "DELETE",
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<{ id: string; deleted: boolean }>;

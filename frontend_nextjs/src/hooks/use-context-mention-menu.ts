@@ -11,7 +11,6 @@ import {
   useState,
 } from "react";
 
-import { getToken } from "@/lib/auth";
 import {
   type ContextMentionItem,
   fetchContextMentions,
@@ -64,14 +63,9 @@ export function useContextMentionMenu({
 
   useEffect(() => {
     if (!enabled) return;
-    const token = getToken();
-    if (!token) {
-      setLoading(false);
-      return;
-    }
     let cancelled = false;
     setLoading(true);
-    void fetchContextMentions(token)
+    void fetchContextMentions()
       .then(list => {
         if (!cancelled) setItems(list);
       })

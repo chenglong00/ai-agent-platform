@@ -28,7 +28,6 @@ import {
   SidebarTrigger,
 } from "@/components/ui/sidebar"
 import { Textarea } from "@/components/ui/textarea"
-import { getToken } from "@/lib/auth"
 import {
   createMemory,
   deleteMemory,
@@ -63,12 +62,10 @@ export default function MemoryPage() {
   const [content, setContent] = useState("")
 
   const load = useCallback(async () => {
-    const token = getToken()
-    if (!token) return
     setLoading(true)
     setError(null)
     try {
-      setMemories(await fetchMemories(token))
+      setMemories(await fetchMemories())
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load memories")
     } finally {
@@ -82,12 +79,11 @@ export default function MemoryPage() {
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault()
-    const token = getToken()
-    if (!token || !content.trim()) return
+    if (!content.trim()) return
     setSaving(true)
     setError(null)
     try {
-      await createMemory(token, { category, content: content.trim() })
+      await createMemory(undefined, { category, content: content.trim() })
       setContent("")
       await load()
     } catch (err) {
@@ -98,13 +94,11 @@ export default function MemoryPage() {
   }
 
   const handleDelete = async (id: string) => {
-    const token = getToken()
-    if (!token) return
     if (!window.confirm("Delete this memory?")) return
     setDeletingId(id)
     setError(null)
     try {
-      await deleteMemory(token, id)
+      await deleteMemory(undefined, id)
       await load()
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not delete memory")

@@ -5,11 +5,13 @@ def register_models() -> None:
     """Import every table model so SQLAlchemy/Alembic see the full schema."""
     from app.modules.agent.model import Agent  # noqa: F401
     from app.modules.auth.model import AuthIdentity  # noqa: F401
+    from app.modules.auth.refresh_token_model import RefreshToken  # noqa: F401
     from app.modules.chat.model import Conversation, Message, MessageBlock  # noqa: F401
     from app.modules.group.model import GroupMember, UserGroup  # noqa: F401
     from app.modules.observability.model import ApiLog  # noqa: F401
     from app.modules.memory.model import UserMemory  # noqa: F401
     from app.modules.skills.model import AgentSkill  # noqa: F401
     from app.modules.connector.model import UserConnector  # noqa: F401
+    from app.modules.subagent.model import UserSubagent  # noqa: F401
     from app.modules.workflow.model import Workflow, WorkflowRun  # noqa: F401
     from app.modules.user.model import User  # noqa: F401

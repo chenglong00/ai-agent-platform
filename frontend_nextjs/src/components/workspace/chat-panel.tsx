@@ -19,7 +19,7 @@ import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { useContextMentionMenu } from "@/hooks/use-context-mention-menu"
 import { useSkillSlashMenu } from "@/hooks/use-skill-slash-menu"
-import { getToken } from "@/lib/auth"
+import { getWsToken } from "@/lib/auth"
 import { fetchCurrentUser } from "@/lib/api"
 import {
   createChatConversation,
@@ -28,6 +28,7 @@ import {
   notifyChatConversationsUpdated,
   streamChatMessage,
   workspaceConversationStorageKey,
+  dashboardConversationStorageKey,
   type ChatMessageDto,
   type MessageBlockDto,
   type SubagentInfo,
@@ -36,14 +37,59 @@ import {
 } from "@/lib/chat"
 import { cn } from "@/lib/utils"
 
-const EXAMPLE_PROMPTS = [
+const WORKSPACE_EXAMPLE_PROMPTS = [
   "Create an `index.html` for a hello-world site under a new `hello/` folder.",
   "Read `index.html` and give me a one-paragraph summary of what it contains.",
   "List every file in the workspace and tell me the total file count.",
   "Add a `README.md` with a short description of this workspace.",
 ]
 
+const DASHBOARD_EXAMPLE_PROMPTS = [
+  "What's the weather in Singapore today?",
+  "Search my knowledge base for onboarding docs and summarize the key steps.",
+  "Help me draft a short weekly status update for my team.",
+  "What skills are available to you right now?",
+]
+
+type ChatPanelVariant = "workspace" | "dashboard"
+
+const PANEL_VARIANTS: Record<
+  ChatPanelVariant,
+  {
+    conversationName: string
+    conversationDescription: string
+    storageKey: (userId?: string | null) => string
+    context: "chat" | "workspace"
+    examplePrompts: string[]
+    emptyStateDescription: string
+    newChatTitle: string
+  }
+> = {
+  workspace: {
+    conversationName: "Workspace",
+    conversationDescription: "Agent session from workspace page",
+    storageKey: workspaceConversationStorageKey,
+    context: "workspace",
+    examplePrompts: WORKSPACE_EXAMPLE_PROMPTS,
+    emptyStateDescription:
+      "The deep agent shares your sandbox workspace. Ask it to create or modify files — changes appear in the file tree after each turn.",
+    newChatTitle: "Start a new workspace chat",
+  },
+  dashboard: {
+    conversationName: "Dashboard",
+    conversationDescription: "Agent session from dashboard page",
+    storageKey: dashboardConversationStorageKey,
+    context: "chat",
+    examplePrompts: DASHBOARD_EXAMPLE_PROMPTS,
+    emptyStateDescription:
+      "Chat with the deep agent from your dashboard — ask questions, run skills, or search your knowledge base.",
+    newChatTitle: "Start a new dashboard chat",
+  },
+}
+
 type WorkspaceChatPanelProps = {
+  /** Panel mode — workspace uses sandbox context; dashboard uses general chat. */
+  variant?: ChatPanelVariant
   /** Called once per assistant turn after streaming finishes. */
   onTurnComplete?: () => void
   /** Workspace root label from the API. */
@@ -95,11 +141,13 @@ function rowToMessage(m: ChatMessageDto): WorkspaceChatMessage {
 }
 
 export function WorkspaceChatPanel({
+  variant = "workspace",
   onTurnComplete,
   workspaceRoot,
   selectedPath,
   className,
 }: WorkspaceChatPanelProps) {
+  const panel = PANEL_VARIANTS[variant]
   const [conversationId, setConversationId] = useState<string | null>(null)
   const [messages, setMessages] = useState<WorkspaceChatMessage[]>([])
   const [sessionReady, setSessionReady] = useState(false)
@@ -110,12 +158,12 @@ export function WorkspaceChatPanel({
   const [sending, setSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [authToken, setAuthToken] = useState("")
-  const storageKeyRef = useRef(workspaceConversationStorageKey())
+  const storageKeyRef = useRef(panel.storageKey())
   const scrollRef = useRef<HTMLDivElement>(null)
 
   const loadConversation = useCallback(
-    async (token: string, id: string) => {
-      const rows = await fetchChatMessages(token, id)
+    async (id: string) => {
+      const rows = await fetchChatMessages(undefined, id)
       setConversationId(id)
       setMessages(rows.map(rowToMessage))
       localStorage.setItem(storageKeyRef.current, id)
@@ -139,24 +187,18 @@ export function WorkspaceChatPanel({
     let cancelled = false
 
     async function bootstrap() {
-      const token = getToken()
-      if (!token) {
-        setSessionReady(true)
-        return
-      }
-      setAuthToken(token)
+      const wsToken = await getWsToken()
+      if (!cancelled) setAuthToken(wsToken ?? "")
 
-      const userResult = await fetchCurrentUser(token)
-      storageKeyRef.current = workspaceConversationStorageKey(
-        userResult.user?.id,
-      )
+      const userResult = await fetchCurrentUser()
+      storageKeyRef.current = panel.storageKey(userResult.user?.id)
 
       const storedId = localStorage.getItem(storageKeyRef.current)
       let loaded = false
 
       if (storedId) {
         try {
-          await loadConversation(token, storedId)
+          await loadConversation(storedId)
           loaded = true
         } catch (loadErr) {
           const detail =
@@ -173,16 +215,16 @@ export function WorkspaceChatPanel({
 
       if (!loaded) {
         try {
-          const { items } = await fetchChatConversations(token, { limit: 30 })
+          const { items } = await fetchChatConversations(undefined, { limit: 30 })
           const existing = items
-            .filter(c => c.name === "Workspace")
+            .filter(c => c.name === panel.conversationName)
             .sort(
               (a, b) =>
                 new Date(b.updated_at).getTime() -
                 new Date(a.updated_at).getTime(),
             )[0]
           if (existing) {
-            await loadConversation(token, existing.id)
+            await loadConversation(existing.id)
             loaded = true
           }
         } catch {
@@ -197,24 +239,19 @@ export function WorkspaceChatPanel({
     return () => {
       cancelled = true
     }
-  }, [loadConversation])
+  }, [loadConversation, panel.conversationName, panel.storageKey])
 
   const sendPrompt = useCallback(
     async (raw: string) => {
       const trimmed = raw.trim()
       if (!trimmed || sending) return
-      const token = getToken()
-      if (!token) {
-        setError("Not signed in.")
-        return
-      }
 
       let conv = conversationId
       if (!conv) {
         try {
-          const created = await createChatConversation(token, {
-            name: "Workspace",
-            description: "Agent session from workspace page",
+          const created = await createChatConversation(undefined, {
+            name: panel.conversationName,
+            description: panel.conversationDescription,
           })
           conv = created.id
           localStorage.setItem(storageKeyRef.current, conv)
@@ -266,8 +303,8 @@ export function WorkspaceChatPanel({
         )
 
       try {
-        for await (const event of streamChatMessage(token, conv, trimmed, {
-          context: "workspace",
+        for await (const event of streamChatMessage(undefined, conv, trimmed, {
+          context: panel.context,
           workspaceRoot: workspaceRoot ?? undefined,
           workspaceSelectedPath: selectedPath ?? undefined,
         })) {
@@ -385,7 +422,7 @@ export function WorkspaceChatPanel({
         onTurnComplete?.()
       }
     },
-    [conversationId, sending, onTurnComplete, workspaceRoot, selectedPath],
+    [conversationId, sending, onTurnComplete, workspaceRoot, selectedPath, panel],
   )
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -414,7 +451,7 @@ export function WorkspaceChatPanel({
               className="h-6 gap-1 px-2 text-[10px] font-normal"
               onClick={startNewChat}
               disabled={sending}
-              title="Start a new workspace chat"
+              title={panel.newChatTitle}
             >
               <PlusIcon className="size-3" />
               New chat
@@ -446,11 +483,10 @@ export function WorkspaceChatPanel({
         {sessionReady && isEmpty ? (
           <div className="space-y-3">
             <p className="text-xs leading-relaxed text-muted-foreground">
-              The deep agent shares your sandbox workspace. Ask it to create or
-              modify files — changes appear in the file tree after each turn.
+              {panel.emptyStateDescription}
             </p>
             <div className="space-y-1.5">
-              {EXAMPLE_PROMPTS.map(prompt => (
+              {panel.examplePrompts.map(prompt => (
                 <button
                   key={prompt}
                   type="button"

@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, authorizedFetch, parseApiErrorMessage } from "./api";
 
 const workflowBase = `${apiBaseUrl}/api/v1/workflows`;
 
@@ -45,11 +45,14 @@ export type WorkflowDraft = {
   interval_minutes: number;
 };
 
-function authHeaders(accessToken: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${accessToken.trim()}`,
-    "Content-Type": "application/json",
-  };
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json" };
+}
+
+export async function fetchWorkflows(_accessToken?: string | null): Promise<WorkflowSummary[]> {
+  const res = await authorizedFetch(workflowBase, { method: "GET" });
+  if (!res.ok) throw new Error(await parseApiErrorMessage(res));
+  return res.json() as Promise<WorkflowSummary[]>;
 }
 
 export function defaultWorkflowDraft(): WorkflowDraft {
@@ -118,82 +121,63 @@ export const runStatusLabel: Record<WorkflowRunStatus, string> = {
   failed: "Failed",
 };
 
-export async function fetchWorkflows(accessToken: string): Promise<WorkflowSummary[]> {
-  const res = await fetch(workflowBase, {
-    headers: authHeaders(accessToken),
-    cache: "no-store",
-  });
-  if (!res.ok) throw new Error(await parseApiErrorMessage(res));
-  return res.json() as Promise<WorkflowSummary[]>;
-}
-
 export async function createWorkflow(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   body: ReturnType<typeof draftToRequestBody>,
 ): Promise<WorkflowSummary> {
-  const res = await fetch(workflowBase, {
+  const res = await authorizedFetch(workflowBase, {
     method: "POST",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify(body),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<WorkflowSummary>;
 }
 
 export async function updateWorkflow(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   workflowId: string,
   body: Partial<ReturnType<typeof draftToRequestBody>>,
 ): Promise<WorkflowSummary> {
-  const res = await fetch(`${workflowBase}/${encodeURIComponent(workflowId)}`, {
+  const res = await authorizedFetch(`${workflowBase}/${encodeURIComponent(workflowId)}`, {
     method: "PATCH",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify(body),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<WorkflowSummary>;
 }
 
 export async function deleteWorkflow(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   workflowId: string,
 ): Promise<void> {
-  const res = await fetch(`${workflowBase}/${encodeURIComponent(workflowId)}`, {
+  const res = await authorizedFetch(`${workflowBase}/${encodeURIComponent(workflowId)}`, {
     method: "DELETE",
-    headers: authHeaders(accessToken),
-    cache: "no-store",
+    headers: jsonHeaders(),
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
 }
 
 export async function fetchWorkflowRuns(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   workflowId: string,
 ): Promise<WorkflowRunSummary[]> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${workflowBase}/${encodeURIComponent(workflowId)}/runs`,
-    {
-      headers: authHeaders(accessToken),
-      cache: "no-store",
-    },
+    { method: "GET" },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<WorkflowRunSummary[]>;
 }
 
 export async function triggerWorkflowRun(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   workflowId: string,
 ): Promise<WorkflowRunSummary> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${workflowBase}/${encodeURIComponent(workflowId)}/run`,
-    {
-      method: "POST",
-      headers: authHeaders(accessToken),
-      cache: "no-store",
-    },
+    { method: "POST", headers: jsonHeaders() },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   const data = (await res.json()) as { run: WorkflowRunSummary };

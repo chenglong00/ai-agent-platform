@@ -37,7 +37,6 @@ import {
 } from "@/components/ui/sidebar"
 import { Switch } from "@/components/ui/switch"
 import { Textarea } from "@/components/ui/textarea"
-import { getToken } from "@/lib/auth"
 import {
   createWorkflow,
   defaultWorkflowDraft,
@@ -86,12 +85,10 @@ export default function WorkflowPage() {
   )
 
   const loadWorkflows = useCallback(async () => {
-    const token = getToken()
-    if (!token) return
     setLoading(true)
     setError(null)
     try {
-      const list = await fetchWorkflows(token)
+      const list = await fetchWorkflows()
       setWorkflows(list)
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not load workflows")
@@ -101,11 +98,9 @@ export default function WorkflowPage() {
   }, [])
 
   const loadRuns = useCallback(async (workflowId: string) => {
-    const token = getToken()
-    if (!token) return
     setLoadingRuns(true)
     try {
-      setRuns(await fetchWorkflowRuns(token, workflowId))
+      setRuns(await fetchWorkflowRuns(undefined, workflowId))
     } catch {
       setRuns([])
     } finally {
@@ -142,8 +137,6 @@ export default function WorkflowPage() {
   }
 
   const handleSave = async () => {
-    const token = getToken()
-    if (!token) return
     if (!draft.name.trim() || !draft.prompt.trim()) {
       setError("Name and prompt are required.")
       return
@@ -154,7 +147,7 @@ export default function WorkflowPage() {
     try {
       const body = draftToRequestBody(draft)
       if (isNew) {
-        const created = await createWorkflow(token, body)
+        const created = await createWorkflow(undefined, body)
         setWorkflows(prev => [created, ...prev])
         setIsNew(false)
         setActiveId(created.id)
@@ -162,7 +155,7 @@ export default function WorkflowPage() {
         setSuccess("Workflow created.")
         await loadRuns(created.id)
       } else if (activeId) {
-        const updated = await updateWorkflow(token, activeId, body)
+        const updated = await updateWorkflow(undefined, activeId, body)
         setWorkflows(prev => prev.map(w => (w.id === updated.id ? updated : w)))
         setDraft(workflowToDraft(updated))
         setSuccess("Workflow saved.")
@@ -177,13 +170,12 @@ export default function WorkflowPage() {
   }
 
   const handleDelete = async () => {
-    const token = getToken()
-    if (!token || !activeId) return
+    if (!activeId) return
     if (!window.confirm("Delete this workflow?")) return
     setDeleting(true)
     setError(null)
     try {
-      await deleteWorkflow(token, activeId)
+      await deleteWorkflow(undefined, activeId)
       setWorkflows(prev => prev.filter(w => w.id !== activeId))
       setActiveId(null)
       setIsNew(false)
@@ -198,13 +190,12 @@ export default function WorkflowPage() {
   }
 
   const handleRunNow = async () => {
-    const token = getToken()
-    if (!token || !activeId) return
+    if (!activeId) return
     setRunning(true)
     setError(null)
     setSuccess(null)
     try {
-      const run = await triggerWorkflowRun(token, activeId)
+      const run = await triggerWorkflowRun(undefined, activeId)
       setRuns(prev => [run, ...prev])
       await loadWorkflows()
       setSuccess(run.status === "succeeded" ? "Run completed." : "Run finished with issues.")

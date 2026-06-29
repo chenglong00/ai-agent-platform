@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, authorizedFetch, parseApiErrorMessage } from "./api";
 
 const memoryBase = `${apiBaseUrl}/api/v1/memory`;
 
@@ -20,44 +20,35 @@ export type CreateMemoryRequest = {
   content: string;
 };
 
-function authHeaders(accessToken: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${accessToken.trim()}`,
-    "Content-Type": "application/json",
-  };
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json" };
 }
 
-export async function fetchMemories(accessToken: string): Promise<UserMemory[]> {
-  const res = await fetch(`${memoryBase}`, {
-    headers: authHeaders(accessToken),
-    cache: "no-store",
-  });
+export async function fetchMemories(_accessToken?: string | null): Promise<UserMemory[]> {
+  const res = await authorizedFetch(`${memoryBase}`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<UserMemory[]>;
 }
 
 export async function createMemory(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   body: CreateMemoryRequest,
 ): Promise<UserMemory> {
-  const res = await fetch(`${memoryBase}`, {
+  const res = await authorizedFetch(`${memoryBase}`, {
     method: "POST",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify(body),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<UserMemory>;
 }
 
 export async function deleteMemory(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   memoryId: string,
 ): Promise<void> {
-  const res = await fetch(`${memoryBase}/${encodeURIComponent(memoryId)}`, {
+  const res = await authorizedFetch(`${memoryBase}/${encodeURIComponent(memoryId)}`, {
     method: "DELETE",
-    headers: authHeaders(accessToken),
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
 }

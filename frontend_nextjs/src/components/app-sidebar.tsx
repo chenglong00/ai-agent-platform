@@ -25,7 +25,7 @@ import {
   fetchCurrentUser,
   sidebarDisplayName,
 } from "@/lib/api"
-import { getToken, logout } from "@/lib/auth"
+import { logout } from "@/lib/auth"
 import {
   CHAT_CONVERSATIONS_PAGE_SIZE,
   CHAT_CONVERSATIONS_UPDATED_EVENT,
@@ -261,16 +261,9 @@ export function AppSidebar({
   } | null>(null)
 
   const loadNavChatsReset = React.useCallback(async () => {
-    const token = getToken()
-    if (!token) {
-      setNavChats([])
-      setNavChatsHasMore(false)
-      setNavChatsLoading(false)
-      return
-    }
     setNavChatsLoading(true)
     try {
-      const { items, hasMore } = await fetchChatConversations(token, {
+      const { items, hasMore } = await fetchChatConversations(undefined, {
         limit: CHAT_CONVERSATIONS_PAGE_SIZE,
         offset: 0,
       })
@@ -285,9 +278,7 @@ export function AppSidebar({
   }, [toNavChatItems])
 
   const loadNavChatsMore = React.useCallback(async () => {
-    const token = getToken()
     if (
-      !token ||
       !navChatsHasMoreRef.current ||
       navChatsLoadingMore ||
       navChatsLoading
@@ -296,7 +287,7 @@ export function AppSidebar({
     }
     setNavChatsLoadingMore(true)
     try {
-      const { items, hasMore } = await fetchChatConversations(token, {
+      const { items, hasMore } = await fetchChatConversations(undefined, {
         limit: CHAT_CONVERSATIONS_PAGE_SIZE,
         offset: navChatsRef.current.length,
       })
@@ -321,16 +312,12 @@ export function AppSidebar({
   }, [loadNavChatsReset])
 
   React.useEffect(() => {
-    const token = getToken()
-    if (!token) return
-
     let cancelled = false
-    void fetchCurrentUser(token).then(result => {
+    void fetchCurrentUser().then(result => {
       if (cancelled) return
       if (!result.user) {
         if (result.unauthorized) {
-          logout()
-          router.replace("/login")
+          void logout().then(() => router.replace("/login"))
           return
         }
         setNavUser({

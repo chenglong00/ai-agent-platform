@@ -12,6 +12,7 @@ from app.modules.knowledge_base.router import router as knowledge_base_router
 from app.modules.memory.router import router as memory_router
 from app.modules.workflow.router import router as workflow_router
 from app.modules.skills.router import router as skills_router
+from app.modules.subagent.router import router as subagent_router
 from app.modules.workspace.router import router as workspace_router
 
 api_router = APIRouter()
@@ -45,5 +46,10 @@ api_router.include_router(
     connector_router,
     prefix="/connectors",
     tags=["connectors"],
+)
+api_router.include_router(
+    subagent_router,
+    prefix="/subagents",
+    tags=["subagents"],
 )
 api_router.include_router(workspace_router, prefix="/workspace", tags=["workspace"])

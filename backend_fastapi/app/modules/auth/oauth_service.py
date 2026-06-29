@@ -28,14 +28,14 @@ class OAuthService:
         resp.raise_for_status()
         return resp.json()
 
-    async def complete_login(self, session: AsyncSession, token: dict, provider: str) -> str:
-        """Run provider-specific login flow. Returns JWT. Raises ValueError for invalid userinfo, AuthenticationError if user disabled."""
+    async def complete_login(self, session: AsyncSession, token: dict, provider: str):
+        """Run provider-specific login flow. Returns TokenPair. Raises ValueError for invalid userinfo."""
         if provider == "google":
             return await self._complete_google(session, token)
         raise ValueError(f"Unsupported OAuth provider: {provider}")
 
-    async def _complete_google(self, session: AsyncSession, token: dict) -> str:
-        """Get userinfo from token (or fetch), create or link user, return JWT."""
+    async def _complete_google(self, session: AsyncSession, token: dict):
+        """Get userinfo from token (or fetch), create or link user, return token pair."""
         userinfo = token.get("userinfo")
         if not userinfo:
             access_token = token.get("access_token")

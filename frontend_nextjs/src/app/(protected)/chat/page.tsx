@@ -42,7 +42,7 @@ import {
   streamChatMessage,
   updateChatConversation,
 } from "@/lib/chat"
-import { getToken } from "@/lib/auth"
+import { getWsToken } from "@/lib/auth"
 import { cn } from "@/lib/utils"
 import type { ChatMessageDto, MessageBlockDto, SubagentInfo, TodoItem, ToolCallInfo } from "@/lib/chat"
 import { SubagentProgress, SynthesisIndicator } from "@/components/ai/subagent-card"
@@ -133,10 +133,8 @@ function ChatPageContent() {
     }
     let cancelled = false
     void (async () => {
-      const token = getToken()
-      if (!token) return
       try {
-        const c = await fetchChatConversation(token, conversationId)
+        const c = await fetchChatConversation(undefined, conversationId)
         if (!cancelled) setConversationTitle(c.name)
       } catch {
         if (!cancelled) setConversationTitle("Chat")
@@ -157,12 +155,8 @@ function ChatPageContent() {
     let cancelled = false
 
     async function bootstrap() {
-      const token = getToken()
-      if (!token) {
-        router.replace("/login")
-        return
-      }
-      setAuthToken(token)
+      const wsToken = await getWsToken()
+      if (!cancelled) setAuthToken(wsToken ?? "")
 
       if (searchParams.get("new") === "1") {
         localStorage.removeItem(chatConversationStorageKey)
@@ -179,7 +173,7 @@ function ChatPageContent() {
       const openId = searchParams.get(CHAT_CONVERSATION_ID_PARAM)
       if (openId && UUID_RE.test(openId)) {
         try {
-          const rows = await fetchChatMessages(token, openId)
+          const rows = await fetchChatMessages(undefined, openId)
           if (cancelled) return
           localStorage.setItem(chatConversationStorageKey, openId)
           setConversationId(openId)
@@ -215,7 +209,7 @@ function ChatPageContent() {
           setInitError(null)
         } else {
           try {
-            const rows = await fetchChatMessages(token, id)
+            const rows = await fetchChatMessages(undefined, id)
             if (cancelled) return
             setConversationId(id)
             setMessages(rows.map(rowToMessage))
@@ -250,7 +244,6 @@ function ChatPageContent() {
 
   const handleSubmit = useCallback(
     async (message: unknown) => {
-      const token = getToken()
       const rawText =
         typeof message === "string"
           ? message
@@ -262,14 +255,13 @@ function ChatPageContent() {
             : ""
       const trimmed = rawText.trim()
 
-      if (!token) { setInitError("Not signed in. Please log in again."); return }
       if (!trimmed) { setInitError("Enter a message to send."); return }
       if (sending) { setInitError("Still sending — wait for it to finish."); return }
 
       let activeConversationId = conversationId
       if (!activeConversationId) {
         try {
-          const conv = await createChatConversation(token, {})
+          const conv = await createChatConversation(undefined, {})
           activeConversationId = conv.id
           localStorage.setItem(chatConversationStorageKey, conv.id)
           setConversationId(conv.id)
@@ -324,7 +316,7 @@ function ChatPageContent() {
       }
 
       try {
-        for await (const event of streamChatMessage(token, activeConversationId, trimmed)) {
+        for await (const event of streamChatMessage(undefined, activeConversationId, trimmed)) {
           if (event.type === "token") {
             setMessages(prev =>
               prev.map(m =>
@@ -453,15 +445,10 @@ function ChatPageContent() {
       setTitleError(null)
       return
     }
-    const token = getToken()
-    if (!token) {
-      setTitleError("Not signed in")
-      return
-    }
     setTitleSaving(true)
     setTitleError(null)
     try {
-      const c = await updateChatConversation(token, conversationId, {
+      const c = await updateChatConversation(undefined, conversationId, {
         name: trimmed,
       })
       setConversationTitle(c.name)

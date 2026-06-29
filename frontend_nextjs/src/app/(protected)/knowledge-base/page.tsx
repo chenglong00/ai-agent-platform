@@ -46,7 +46,6 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { getToken } from "@/lib/auth"
 import {
   fetchKnowledgeBaseDocument,
   fetchKnowledgeBaseDocumentFile,
@@ -157,23 +156,19 @@ export default function KnowledgeBasePage() {
     chunkStrategy !== "by_page"
 
   const refreshDocuments = useCallback(async () => {
-    const token = getToken()
-    if (!token) return []
-    const docs = await fetchKnowledgeBaseDocuments(token)
+    const docs = await fetchKnowledgeBaseDocuments()
     setDocuments(docs)
     return docs
   }, [])
 
   const loadInitial = useCallback(async () => {
-    const token = getToken()
-    if (!token) return
     setLoadingOptions(true)
     setLoadingDocuments(true)
     setError(null)
     try {
       const [opts, docs] = await Promise.all([
-        fetchKnowledgeBaseOptions(token),
-        fetchKnowledgeBaseDocuments(token),
+        fetchKnowledgeBaseOptions(),
+        fetchKnowledgeBaseDocuments(),
       ])
       setOptions(opts)
       setDocuments(docs)
@@ -240,9 +235,7 @@ export default function KnowledgeBasePage() {
   }, [docMeta, docAccess, tagsInput])
 
   const loadPdfPreview = useCallback(async (documentId: string) => {
-    const token = getToken()
-    if (!token) return
-    const blob = await fetchKnowledgeBaseDocumentFile(token, documentId)
+    const blob = await fetchKnowledgeBaseDocumentFile(undefined, documentId)
     const url = URL.createObjectURL(blob)
     setPdfUrl(prev => {
       if (prev) URL.revokeObjectURL(prev)
@@ -251,15 +244,13 @@ export default function KnowledgeBasePage() {
   }, [])
 
   const openDocument = async (doc: DocumentSummary) => {
-    const token = getToken()
-    if (!token) return
     setError(null)
     setSuccess(null)
     setChunkPreview(null)
     setStoredChunks(null)
     setActiveSummary(doc)
     try {
-      const detail = await fetchKnowledgeBaseDocument(token, doc.id)
+      const detail = await fetchKnowledgeBaseDocument(undefined, doc.id)
       setActiveDoc({
         id: detail.id,
         filename: detail.filename,
@@ -292,7 +283,7 @@ export default function KnowledgeBasePage() {
       if (detail.parsing_strategy) setParsingStrategy(detail.parsing_strategy)
       if (detail.embedding_model) setEmbeddingModel(detail.embedding_model)
       if (detail.status === "ingested") {
-        const stored = await fetchKnowledgeBaseStoredChunks(token, doc.id)
+        const stored = await fetchKnowledgeBaseStoredChunks(undefined, doc.id)
         setStoredChunks(stored)
       }
     } catch (e) {
@@ -301,8 +292,6 @@ export default function KnowledgeBasePage() {
   }
 
   const handleUpload = async (file: File) => {
-    const token = getToken()
-    if (!token) return
     if (file.type !== "application/pdf") {
       setError("Only PDF files are supported.")
       return
@@ -316,7 +305,7 @@ export default function KnowledgeBasePage() {
     try {
       const settings = buildSettingsPayload()
       const result = await uploadKnowledgeBaseDocument(
-        token,
+        undefined,
         file,
         settings,
         parsingStrategy,
@@ -350,12 +339,10 @@ export default function KnowledgeBasePage() {
 
   const handlePreviewChunks = async () => {
     if (!activeDoc) return
-    const token = getToken()
-    if (!token) return
     setPreviewing(true)
     setError(null)
     try {
-      const preview = await previewKnowledgeBaseChunks(token, activeDoc.id, {
+      const preview = await previewKnowledgeBaseChunks(undefined, activeDoc.id, {
         chunking_strategy: chunkStrategy,
         chunk_size: chunkSize,
         chunk_overlap: chunkOverlap,
@@ -370,15 +357,13 @@ export default function KnowledgeBasePage() {
 
   const handleSaveSettings = async () => {
     if (!activeDoc || !canManage || isIndexed) return
-    const token = getToken()
-    if (!token) return
     setSavingSettings(true)
     setError(null)
     setSuccess(null)
     try {
       const payload = buildSettingsPayload()
       const detail = await updateKnowledgeBaseDocumentSettings(
-        token,
+        undefined,
         activeDoc.id,
         payload,
       )
@@ -403,13 +388,11 @@ export default function KnowledgeBasePage() {
 
   const handleIngest = async () => {
     if (!activeDoc) return
-    const token = getToken()
-    if (!token) return
     setIngesting(true)
     setError(null)
     setSuccess(null)
     try {
-      const result = await ingestKnowledgeBaseDocument(token, activeDoc.id, {
+      const result = await ingestKnowledgeBaseDocument(undefined, activeDoc.id, {
         chunking_strategy: chunkStrategy,
         chunk_size: chunkSize,
         chunk_overlap: chunkOverlap,
@@ -425,7 +408,7 @@ export default function KnowledgeBasePage() {
         setActiveDoc(prev =>
           prev ? { ...prev, status: "ingested" } : prev,
         )
-        const stored = await fetchKnowledgeBaseStoredChunks(token, activeDoc.id)
+        const stored = await fetchKnowledgeBaseStoredChunks(undefined, activeDoc.id)
         setStoredChunks(stored)
       }
     } catch (e) {
@@ -456,13 +439,11 @@ export default function KnowledgeBasePage() {
     ) {
       return
     }
-    const token = getToken()
-    if (!token) return
     setDeleting(true)
     setError(null)
     setSuccess(null)
     try {
-      await deleteKnowledgeBaseDocument(token, doc.id)
+      await deleteKnowledgeBaseDocument(undefined, doc.id)
       if (activeDoc?.id === doc.id) {
         clearActiveDocument()
       }

@@ -19,7 +19,6 @@ import {
   SidebarProvider,
   SidebarTrigger,
 } from "@/components/ui/sidebar"
-import { getToken } from "@/lib/auth"
 import {
   buildWorkspaceTree,
   fetchWorkspaceFile,
@@ -69,14 +68,12 @@ export default function WorkspacePage() {
         return refreshInFlight.current
       }
       const run = (async () => {
-      const token = getToken()
-      if (!token) return
       setTreeLoading(true)
       setError(null)
       try {
-        const rootInfo = await fetchWorkspaceRoot(token)
+        const rootInfo = await fetchWorkspaceRoot()
         setWorkspaceRoot(rootInfo.root)
-        const result = await fetchWorkspaceTree(token)
+        const result = await fetchWorkspaceTree()
         setEntries(result.entries)
 
         if (opts.resetSnapshot || !initialSnapshotTaken.current) {
@@ -114,11 +111,9 @@ export default function WorkspacePage() {
 
   useEffect(() => {
     if (!selectedPath) return
-    const token = getToken()
-    if (!token) return
     let cancelled = false
     setSelectedLoading(true)
-    void fetchWorkspaceFile(token, selectedPath)
+    void fetchWorkspaceFile(undefined, selectedPath)
       .then(file => {
         if (cancelled || file.binary) return
         setFiles(prev => {
@@ -145,11 +140,10 @@ export default function WorkspacePage() {
   }, [selectedPath])
 
   const reloadSelectedFile = useCallback(async () => {
-    const token = getToken()
-    if (!token || !selectedPath) return
+    if (!selectedPath) return
     setSelectedLoading(true)
     try {
-      const file = await fetchWorkspaceFile(token, selectedPath)
+      const file = await fetchWorkspaceFile(undefined, selectedPath)
       if (file.binary) return
       setFiles(prev => {
         const next = new Map(prev)

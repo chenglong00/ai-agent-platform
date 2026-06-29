@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, apiFetchInit, authorizedFetch, parseApiErrorMessage } from "./api";
 
 const chatBase = `${apiBaseUrl}/api/v1/chat`;
 
@@ -7,6 +7,13 @@ export const chatConversationStorageKey = "ai_platform_chat_conversation_id";
 /** Persisted workspace panel conversation (separate from main chat). */
 export function workspaceConversationStorageKey(userId?: string | null): string {
   const base = "ai_platform_workspace_conversation_id";
+  if (userId) return `${base}_${userId}`;
+  return base;
+}
+
+/** Persisted dashboard panel conversation (separate from main chat and workspace). */
+export function dashboardConversationStorageKey(userId?: string | null): string {
+  const base = "ai_platform_dashboard_conversation_id";
   if (userId) return `${base}_${userId}`;
   return base;
 }
@@ -61,11 +68,8 @@ export type SendMessageResult = {
   assistant_content_format?: "markdown" | "plain";
 };
 
-function authHeaders(accessToken: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${accessToken.trim()}`,
-    "Content-Type": "application/json",
-  };
+function authHeaders(_accessToken?: string | null): HeadersInit {
+  return { "Content-Type": "application/json" };
 }
 
 /** WebSocket URL for live Playwright screencast (JWT via query param). */
@@ -84,7 +88,7 @@ export function browserLiveWsUrl(accessToken: string): string {
 }
 
 export async function fetchChatConversations(
-  accessToken: string,
+  _accessToken?: string | null,
   options: { limit?: number; offset?: number } = {},
 ): Promise<ChatConversationListResult> {
   const limit = options.limit ?? CHAT_CONVERSATIONS_PAGE_SIZE;
@@ -93,10 +97,8 @@ export async function fetchChatConversations(
     limit: String(limit),
     offset: String(offset),
   });
-  const res = await fetch(`${chatBase}/conversations?${params}`, {
+  const res = await authorizedFetch(`${chatBase}/conversations?${params}`, {
     method: "GET",
-    headers: { Authorization: `Bearer ${accessToken.trim()}` },
-    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
@@ -112,16 +114,12 @@ export async function fetchChatConversations(
 }
 
 export async function fetchChatConversation(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   conversationId: string,
 ): Promise<ChatConversation> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${chatBase}/conversations/${encodeURIComponent(conversationId)}`,
-    {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken.trim()}` },
-      cache: "no-store",
-    },
+    { method: "GET" },
   );
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
@@ -130,17 +128,16 @@ export async function fetchChatConversation(
 }
 
 export async function updateChatConversation(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   conversationId: string,
   body: { name: string },
 ): Promise<ChatConversation> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${chatBase}/conversations/${encodeURIComponent(conversationId)}`,
     {
       method: "PUT",
-      headers: authHeaders(accessToken),
+      headers: authHeaders(),
       body: JSON.stringify(body),
-      cache: "no-store",
     },
   );
   if (!res.ok) {
@@ -150,14 +147,13 @@ export async function updateChatConversation(
 }
 
 export async function createChatConversation(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   body: { name?: string; description?: string | null } = {},
 ): Promise<ChatConversation> {
-  const res = await fetch(`${chatBase}/conversations`, {
+  const res = await authorizedFetch(`${chatBase}/conversations`, {
     method: "POST",
-    headers: authHeaders(accessToken),
+    headers: authHeaders(),
     body: JSON.stringify(body),
-    cache: "no-store",
   });
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
@@ -166,16 +162,12 @@ export async function createChatConversation(
 }
 
 export async function fetchChatMessages(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   conversationId: string,
 ): Promise<ChatMessageDto[]> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${chatBase}/conversations/${encodeURIComponent(conversationId)}/messages`,
-    {
-      method: "GET",
-      headers: { Authorization: `Bearer ${accessToken.trim()}` },
-      cache: "no-store",
-    },
+    { method: "GET" },
   );
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
@@ -236,24 +228,23 @@ export type StreamChatOptions = {
 };
 
 export async function* streamChatMessage(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   conversationId: string,
   text: string,
   options: StreamChatOptions = {},
 ): AsyncGenerator<StreamEvent> {
   const res = await fetch(
     `${chatBase}/conversations/${encodeURIComponent(conversationId)}/messages/stream`,
-    {
+    apiFetchInit({
       method: "POST",
-      headers: authHeaders(accessToken),
+      headers: authHeaders(),
       body: JSON.stringify({
         text: text.trim(),
         context: options.context,
         workspace_selected_path: options.workspaceSelectedPath ?? undefined,
         workspace_root: options.workspaceRoot ?? undefined,
       }),
-      cache: "no-store",
-    },
+    }),
   );
 
   if (!res.ok) {
@@ -290,7 +281,7 @@ export async function* streamChatMessage(
 }
 
 export async function sendChatMessage(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   conversationId: string,
   text: string,
 ): Promise<SendMessageResult> {
@@ -299,13 +290,12 @@ export async function sendChatMessage(
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   let res: Response;
   try {
-    res = await fetch(
+    res = await authorizedFetch(
       `${chatBase}/conversations/${encodeURIComponent(conversationId)}/messages`,
       {
         method: "POST",
-        headers: authHeaders(accessToken),
+        headers: authHeaders(),
         body: JSON.stringify({ text: text.trim() }),
-        cache: "no-store",
         signal: controller.signal,
       },
     );

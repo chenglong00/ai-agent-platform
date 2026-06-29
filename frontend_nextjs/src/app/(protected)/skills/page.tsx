@@ -41,7 +41,6 @@ import {
 import { Switch } from "@/components/ui/switch"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
-import { getToken } from "@/lib/auth"
 import {
   createSkill,
   defaultSkillAccess,
@@ -111,11 +110,9 @@ export default function SkillsPage() {
   )
 
   const loadLists = useCallback(async () => {
-    const token = getToken()
-    if (!token) return
     const [builtinList, customList] = await Promise.all([
-      fetchBuiltinSkills(token),
-      fetchSkills(token),
+      fetchBuiltinSkills(),
+      fetchSkills(),
     ])
     setBuiltins(builtinList)
     setSkills(customList)
@@ -141,18 +138,16 @@ export default function SkillsPage() {
   }, [])
 
   const loadInitial = useCallback(async () => {
-    const token = getToken()
-    if (!token) return
     setLoading(true)
     setError(null)
     try {
       const [opts, customList] = await Promise.all([
-        fetchSkillOptions(token),
+        fetchSkillOptions(),
         loadLists(),
       ])
       setOptions(opts)
       if (customList && customList.length > 0) {
-        const detail = await fetchSkill(token, customList[0].id)
+        const detail = await fetchSkill(undefined, customList[0].id)
         setActiveId(detail.id)
         applyDetail(detail)
       }
@@ -168,15 +163,13 @@ export default function SkillsPage() {
   }, [loadInitial])
 
   const openSkill = async (skill: SkillSummary) => {
-    const token = getToken()
-    if (!token) return
     setError(null)
     setSuccess(null)
     setIsBuiltinView(false)
     setActiveBuiltinSlug(null)
     setEditorTab("edit")
     try {
-      const detail = await fetchSkill(token, skill.id)
+      const detail = await fetchSkill(undefined, skill.id)
       setActiveId(skill.id)
       applyDetail(detail)
     } catch (e) {
@@ -185,8 +178,6 @@ export default function SkillsPage() {
   }
 
   const openBuiltinSkill = async (skill: SkillSummary) => {
-    const token = getToken()
-    if (!token) return
     setError(null)
     setSuccess(null)
     setOpeningBuiltin(true)
@@ -197,7 +188,7 @@ export default function SkillsPage() {
     setCanManage(false)
     setEditorTab("preview")
     try {
-      const detail = await fetchBuiltinSkill(token, skill.slug)
+      const detail = await fetchBuiltinSkill(undefined, skill.slug)
       applyDetail(detail, "preview")
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not open built-in skill")
@@ -221,8 +212,6 @@ export default function SkillsPage() {
   }
 
   const handleSave = async () => {
-    const token = getToken()
-    if (!token) return
     if (!draft.name.trim() || !draft.content.trim()) {
       setError("Name and instructions are required.")
       return
@@ -232,13 +221,13 @@ export default function SkillsPage() {
     setSuccess(null)
     try {
       if (isNew) {
-        const created = await createSkill(token, draft)
+        const created = await createSkill(undefined, draft)
         await loadLists()
         setActiveId(created.id)
         applyDetail(created)
         setSuccess(`Created skill "${created.name}".`)
       } else if (activeId) {
-        const updated = await updateSkill(token, activeId, draft)
+        const updated = await updateSkill(undefined, activeId, draft)
         await loadLists()
         applyDetail(updated)
         setSuccess(`Saved "${updated.name}".`)
@@ -260,13 +249,11 @@ export default function SkillsPage() {
     ) {
       return
     }
-    const token = getToken()
-    if (!token) return
     setDeleting(true)
     setError(null)
     setSuccess(null)
     try {
-      await deleteSkill(token, activeId)
+      await deleteSkill(undefined, activeId)
       const list = await loadLists()
       if (list && list.length > 0) {
         await openSkill(list[0])

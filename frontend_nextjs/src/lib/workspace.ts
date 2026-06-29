@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, authorizedFetch, parseApiErrorMessage } from "./api";
 
 const workspaceBase = `${apiBaseUrl}/api/v1/workspace`;
 
@@ -30,49 +30,32 @@ export type WorkspaceFileResult = {
   binary: boolean;
 };
 
-function authHeaders(accessToken: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${accessToken.trim()}`,
-  };
-}
-
 export async function fetchWorkspaceRoot(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<WorkspaceRootResult> {
-  const res = await fetch(`${workspaceBase}/root`, {
-    headers: authHeaders(accessToken),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(`${workspaceBase}/root`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return (await res.json()) as WorkspaceRootResult;
 }
 
 export async function fetchWorkspaceTree(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   path = "",
 ): Promise<WorkspaceTreeResult> {
   const url = new URL(`${workspaceBase}/tree`, window.location.origin);
   if (path) url.searchParams.set("path", path);
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: authHeaders(accessToken),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(url.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return (await res.json()) as WorkspaceTreeResult;
 }
 
 export async function fetchWorkspaceFile(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   path: string,
 ): Promise<WorkspaceFileResult> {
   const url = new URL(`${workspaceBase}/file`, window.location.origin);
   url.searchParams.set("path", path);
-  const res = await fetch(url.toString(), {
-    method: "GET",
-    headers: authHeaders(accessToken),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(url.toString(), { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return (await res.json()) as WorkspaceFileResult;
 }

@@ -58,9 +58,10 @@ export function NavUser({ user }: { user: NavUserProfile | null | undefined }) {
   const avatarSrc = user.avatar?.trim() ?? ""
 
   function handleLogout() {
-    logout()
-    router.replace("/login")
-    router.refresh()
+    void logout().then(() => {
+      router.replace("/login")
+      router.refresh()
+    })
   }
 
   return (

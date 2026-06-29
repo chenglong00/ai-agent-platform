@@ -26,6 +26,10 @@ class Settings(BaseSettings):
     SECRET_KEY_PREVIOUS: str = ""
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    # httpOnly auth cookies (set AUTH_COOKIE_SECURE=true in production behind HTTPS)
+    AUTH_COOKIE_SECURE: bool = False
+    AUTH_COOKIE_SAMESITE: str = "lax"
 
     # Comma-separated origins. Stored as str so pydantic-settings does not coerce before parsing.
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
@@ -83,7 +87,7 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_SECRET: str = ""
     # Must match the redirect URI in Google Cloud Console (e.g. http://localhost:8000/api/v1/oauth/google/callback)
     GOOGLE_REDIRECT_URI: str = ""
-    # Where to redirect the user after successful Google login (e.g. http://localhost:3000/login/callback). Token is appended as ?token=...
+    # Where to redirect after successful Google login (e.g. http://localhost:3000/dashboard). Auth cookies are set on the OAuth callback response.
     AUTH_SUCCESS_REDIRECT_URL: str = ""
     # Extra Google OAuth scopes (space-separated). e.g. "https://www.googleapis.com/auth/calendar.readonly" for Calendar. Base "openid email profile" are always included.
     GOOGLE_EXTRA_SCOPES: str = ""
@@ -143,6 +147,11 @@ class Settings(BaseSettings):
     BROWSER_PLAYWRIGHT_LIVE_ENABLED: bool = True
     BROWSER_PLAYWRIGHT_LIVE_MAX_FPS: int = 12
     BROWSER_PLAYWRIGHT_LIVE_JPEG_QUALITY: int = 65
+
+    # Langfuse LLM tracing (optional). Enabled when all three vars are set.
+    LANGFUSE_PUBLIC_KEY: str = ""
+    LANGFUSE_SECRET_KEY: str = ""
+    LANGFUSE_BASE_URL: str = ""
 
 
 def prepare_settings() -> Settings:

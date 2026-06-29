@@ -10,6 +10,7 @@ from typing import Annotated
 from app.core.config import settings
 from app.core.security.dependencies import get_db
 from app.core.security.oauth import build_auth_success_redirect_url, get_oauth, is_google_oauth_configured
+from app.modules.auth.cookies import set_auth_cookies
 from app.modules.auth.oauth_service import oauth_service
 
 logger = logging.getLogger(__name__)
@@ -33,7 +34,7 @@ async def google_callback(
     session: Annotated[AsyncSession, Depends(get_db)],
     oauth=Depends(get_oauth),
 ):
-    """Exchange the authorization code (Authlib validates state), get userinfo, create or link user, redirect with JWT."""
+    """Exchange code, create or link user, set auth cookies, redirect to frontend."""
     if not is_google_oauth_configured():
         raise HTTPException(
             status_code=503,
@@ -47,8 +48,14 @@ async def google_callback(
         raise HTTPException(status_code=400, detail="Failed to exchange code for token")
 
     try:
-        access_token_jwt = await oauth_service.complete_login(session, token, "google")
+        tokens = await oauth_service.complete_login(session, token, "google")
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    return RedirectResponse(url=build_auth_success_redirect_url(access_token_jwt))
+    response = RedirectResponse(url=build_auth_success_redirect_url(), status_code=302)
+    set_auth_cookies(
+        response,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
+    )
+    return response

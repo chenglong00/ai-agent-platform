@@ -17,6 +17,7 @@ from app.ai.chat_agent.graph import get_deep_agent
 from app.ai.config import AgentSettings
 from app.core.config import settings
 from app.core.db.postgres import get_async_session_factory
+from app.core.observability.langfuse import agent_trace_context, record_trace_io
 from app.modules.agent.model import AgentType
 from app.modules.chat.stream_blocks import TurnBlockCollector
 from app.modules.chat.schema import PendingToolCall
@@ -99,6 +100,7 @@ class AgentService:
         *,
         user_role: str | None = None,
         group_ids: list[UUID] | None = None,
+        langfuse_handler: Any | None = None,
     ) -> dict:
         configurable: dict[str, Any] = {
             "thread_id": thread_id,
@@ -108,10 +110,13 @@ class AgentService:
             configurable["user_role"] = user_role
         if group_ids:
             configurable["group_ids"] = [str(group_id) for group_id in group_ids]
-        return {
+        config: dict[str, Any] = {
             "configurable": configurable,
             "recursion_limit": AgentService._recursion_limit(),
         }
+        if langfuse_handler is not None:
+            config["callbacks"] = [langfuse_handler]
+        return config
 
     @staticmethod
     def _build_messages(
@@ -241,73 +246,86 @@ class AgentService:
     ) -> tuple[str, list[PendingToolCall]]:
         agent = get_deep_agent()
         thread_id = str(conversation_id) if conversation_id else "default"
-        config = self._build_run_config(
-            thread_id,
-            user_id,
-            user_role=user_role,
-            group_ids=group_ids,
-        )
+        session_id = thread_id if conversation_id else None
 
-        pending_before = self._pending_tool_calls(agent, config)
-        if pending_before:
-            normalized = user_text.strip().lower()
-            decision = (
-                [{"type": "approve"}]
-                if normalized in _APPROVE_PHRASES
-                else [{"type": "reject", "message": user_text}]
-            )
-            invoke_input: Any = Command(resume=decision)
-        else:
-            memory_context = await self._memory_context_for_user(user_id)
-            invoke_input = {
-                "messages": self._build_messages(
-                    user_text,
-                    conversation_history,
-                    memory_context,
-                ),
-            }
-
-        timeout_s = self._agent_timeout_seconds()
-        recursed = False
-        try:
-            out = await asyncio.wait_for(
-                agent.ainvoke(invoke_input, config=config),
-                timeout=timeout_s,
-            )
-        except TimeoutError:
-            logger.warning("agent_reply_timeout agent_type=%s timeout_s=%.1f", agent_type, timeout_s)
-            raise
-        except GraphRecursionError:
-            logger.warning(
-                "agent_reply_recursion_limit agent_type=%s thread_id=%s",
-                agent_type,
+        with agent_trace_context(
+            trace_name="chat-response",
+            user_id=user_id,
+            session_id=session_id,
+            user_text=user_text,
+            streaming=False,
+        ) as langfuse_handler:
+            config = self._build_run_config(
                 thread_id,
+                user_id,
+                user_role=user_role,
+                group_ids=group_ids,
+                langfuse_handler=langfuse_handler,
             )
-            recursed = True
-            out = None
 
-        pending_after = self._pending_tool_calls(agent, config)
-        if pending_after:
-            calls_summary = ", ".join(f"`{p.tool_name}({p.args})`" for p in pending_after)
-            text = (
-                f"I want to call {calls_summary}.\n\n"
-                "Reply **yes** to approve or **no** to cancel."
-            )
-        else:
-            text = self._assistant_text_from_agent_result(out) if out is not None else ""
-            if not text.strip():
-                if recursed:
-                    text = (
-                        "The agent stopped after reaching the maximum step limit "
-                        f"({self._recursion_limit()}). Please simplify your request or try again."
-                    )
-                else:
-                    text = (
-                        "I completed the request but couldn't produce a visible reply. "
-                        "Please try again."
-                    )
+            pending_before = self._pending_tool_calls(agent, config)
+            if pending_before:
+                normalized = user_text.strip().lower()
+                decision = (
+                    [{"type": "approve"}]
+                    if normalized in _APPROVE_PHRASES
+                    else [{"type": "reject", "message": user_text}]
+                )
+                invoke_input: Any = Command(resume=decision)
+            else:
+                memory_context = await self._memory_context_for_user(user_id)
+                invoke_input = {
+                    "messages": self._build_messages(
+                        user_text,
+                        conversation_history,
+                        memory_context,
+                    ),
+                }
 
-        return text, pending_after
+            timeout_s = self._agent_timeout_seconds()
+            recursed = False
+            try:
+                out = await asyncio.wait_for(
+                    agent.ainvoke(invoke_input, config=config),
+                    timeout=timeout_s,
+                )
+            except TimeoutError:
+                logger.warning("agent_reply_timeout agent_type=%s timeout_s=%.1f", agent_type, timeout_s)
+                raise
+            except GraphRecursionError:
+                logger.warning(
+                    "agent_reply_recursion_limit agent_type=%s thread_id=%s",
+                    agent_type,
+                    thread_id,
+                )
+                recursed = True
+                out = None
+
+            pending_after = self._pending_tool_calls(agent, config)
+            if pending_after:
+                calls_summary = ", ".join(f"`{p.tool_name}({p.args})`" for p in pending_after)
+                text = (
+                    f"I want to call {calls_summary}.\n\n"
+                    "Reply **yes** to approve or **no** to cancel."
+                )
+            else:
+                text = self._assistant_text_from_agent_result(out) if out is not None else ""
+                if not text.strip():
+                    if recursed:
+                        text = (
+                            "The agent stopped after reaching the maximum step limit "
+                            f"({self._recursion_limit()}). Please simplify your request or try again."
+                        )
+                    else:
+                        text = (
+                            "I completed the request but couldn't produce a visible reply. "
+                            "Please try again."
+                        )
+
+            if langfuse_handler is not None:
+                record_trace_io(user_input=user_text, assistant_output=text)
+
+            return text, pending_after
 
     @staticmethod
     def _tool_output_text(output: Any) -> str:
@@ -343,245 +361,258 @@ class AgentService:
         """Yield SSE-ready event dicts while the agent runs."""
         agent = get_deep_agent()
         thread_id = str(conversation_id) if conversation_id else "default"
-        config = self._build_run_config(
-            thread_id,
-            user_id,
-            user_role=user_role,
-            group_ids=group_ids,
-        )
+        session_id = thread_id if conversation_id else None
 
-        pending_before = self._pending_tool_calls(agent, config)
-        initial_message_count = 0
-        try:
-            state_before = agent.get_state(config)
-            values_before = getattr(state_before, "values", None)
-            if isinstance(values_before, dict) and isinstance(values_before.get("messages"), list):
-                initial_message_count = len(values_before["messages"])
-        except Exception:
-            pass
-
-        if pending_before:
-            normalized = user_text.strip().lower()
-            decision = (
-                [{"type": "approve"}]
-                if normalized in _APPROVE_PHRASES
-                else [{"type": "reject", "message": user_text}]
+        with agent_trace_context(
+            trace_name="chat-stream",
+            user_id=user_id,
+            session_id=session_id,
+            user_text=user_text,
+            streaming=True,
+        ) as langfuse_handler:
+            config = self._build_run_config(
+                thread_id,
+                user_id,
+                user_role=user_role,
+                group_ids=group_ids,
+                langfuse_handler=langfuse_handler,
             )
-            invoke_input: Any = Command(resume=decision)
-        else:
-            memory_context = await self._memory_context_for_user(user_id)
-            invoke_input = {
-                "messages": self._build_messages(
-                    user_text,
-                    conversation_history,
-                    memory_context,
-                ),
-            }
 
-        full_text_parts: list[str] = []
-        token_chunks = 0
-        recursed = False
-        turn_blocks = TurnBlockCollector()
-
-        stream = await agent.astream_events(
-            invoke_input,
-            config=config,
-            version="v3",
-        )
-        outbound: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
-
-        async with stream:
-
-            async def emit_tool_calls() -> None:
-                async for tool_call in stream.tool_calls:
-                    if tool_call.tool_name == "task":
-                        async for _ in tool_call.output_deltas:
-                            pass
-                        continue
-
-                    args = (
-                        tool_call.input
-                        if isinstance(tool_call.input, dict)
-                        else self._tool_input_dict(tool_call.input)
-                    )
-                    call_id = tool_call.tool_call_id
-                    started_at = int(time.time() * 1000)
-
-                    await outbound.put({
-                        "type": "tool_call_start",
-                        "id": call_id,
-                        "tool_name": tool_call.tool_name,
-                        "args": args,
-                        "started_at": started_at,
-                    })
-
-                    async for delta in tool_call.output_deltas:
-                        if (
-                            isinstance(delta, dict)
-                            and delta.get("type") == "screenshot"
-                        ):
-                            await outbound.put({
-                                "type": "browser_preview",
-                                "tool_call_id": call_id,
-                                "url": str(delta.get("url") or ""),
-                                "image_base64": str(delta.get("image_base64") or ""),
-                            })
-
-                    completed_at = int(time.time() * 1000)
-                    if tool_call.error:
-                        await outbound.put({
-                            "type": "tool_call_end",
-                            "id": call_id,
-                            "tool_name": tool_call.tool_name,
-                            "result": tool_call.error,
-                            "status": "error",
-                            "completed_at": completed_at,
-                        })
-                    else:
-                        await outbound.put({
-                            "type": "tool_call_end",
-                            "id": call_id,
-                            "tool_name": tool_call.tool_name,
-                            "result": self._tool_output_text(tool_call.output),
-                            "status": "complete",
-                            "completed_at": completed_at,
-                        })
-
-            async def emit_messages() -> None:
-                async for message in stream.messages:
-                    async for token in message.text:
-                        if token:
-                            await outbound.put({"type": "token", "content": token})
-
-            async def emit_subagents() -> None:
-                async for subagent in stream.subagents:
-                    sa_id = subagent.trigger_call_id or str(uuid4())
-                    started_at = int(time.time() * 1000)
-                    await outbound.put({
-                        "type": "subagent_start",
-                        "id": sa_id,
-                        "subagent_type": subagent.name or "agent",
-                        "description": "",
-                        "started_at": started_at,
-                    })
-
-                    content_parts: list[str] = []
-                    async for message in subagent.messages:
-                        async for token in message.text:
-                            if not token:
-                                continue
-                            content_parts.append(token)
-                            await outbound.put({
-                                "type": "subagent_token",
-                                "id": sa_id,
-                                "content": token,
-                            })
-
-                    result = "".join(content_parts)
-                    status = "complete"
-                    try:
-                        output = await subagent.output
-                        if not result.strip() and output is not None:
-                            result = self._tool_output_text(output)
-                    except Exception:
-                        status = "error"
-                        if not result:
-                            result = "Subagent failed"
-
-                    await outbound.put({
-                        "type": "subagent_done",
-                        "id": sa_id,
-                        "result": result,
-                        "status": status,
-                        "completed_at": int(time.time() * 1000),
-                    })
-
-            async def run_projections() -> bool:
-                hit_recursion_limit = False
-                try:
-                    results = await asyncio.gather(
-                        emit_tool_calls(),
-                        emit_messages(),
-                        emit_subagents(),
-                        return_exceptions=True,
-                    )
-                    for result in results:
-                        if isinstance(result, GraphRecursionError):
-                            hit_recursion_limit = True
-                            logger.warning("stream_reply_recursion_limit thread_id=%s", thread_id)
-                        elif isinstance(result, Exception):
-                            raise result
-                finally:
-                    await outbound.put(None)
-                return hit_recursion_limit
-
-            projections = asyncio.create_task(run_projections())
+            pending_before = self._pending_tool_calls(agent, config)
+            initial_message_count = 0
             try:
-                while True:
-                    event = await outbound.get()
-                    if event is None:
-                        break
-                    if event.get("type") == "token":
-                        content = event.get("content", "")
-                        if content:
-                            full_text_parts.append(content)
-                            token_chunks += 1
-                    turn_blocks.observe(event)
-                    yield event
-            finally:
-                recursed = await projections
+                state_before = agent.get_state(config)
+                values_before = getattr(state_before, "values", None)
+                if isinstance(values_before, dict) and isinstance(values_before.get("messages"), list):
+                    initial_message_count = len(values_before["messages"])
+            except Exception:
+                pass
 
-        pending_after = self._pending_tool_calls(agent, config)
-        if pending_after:
-            yield {
-                "type": "interrupt",
-                "pending_tool_calls": [
-                    {
-                        "tool_name": p.tool_name,
-                        "args": p.args,
-                        "description": p.description,
-                    }
-                    for p in pending_after
-                ],
-            }
-
-        full_text = "".join(full_text_parts).strip()
-        if not full_text and not pending_after:
-            full_text = self._assistant_text_from_graph_state(
-                agent,
-                config,
-                min_message_index=initial_message_count,
-            )
-
-        if not full_text and not pending_after:
-            if recursed:
-                full_text = (
-                    "The agent stopped after reaching the maximum step limit "
-                    f"({self._recursion_limit()}). Please simplify your request or try again."
+            if pending_before:
+                normalized = user_text.strip().lower()
+                decision = (
+                    [{"type": "approve"}]
+                    if normalized in _APPROVE_PHRASES
+                    else [{"type": "reject", "message": user_text}]
                 )
+                invoke_input: Any = Command(resume=decision)
             else:
-                full_text = (
-                    "I completed the request but couldn't produce a visible reply. "
-                    "Please try again."
+                memory_context = await self._memory_context_for_user(user_id)
+                invoke_input = {
+                    "messages": self._build_messages(
+                        user_text,
+                        conversation_history,
+                        memory_context,
+                    ),
+                }
+
+            full_text_parts: list[str] = []
+            token_chunks = 0
+            recursed = False
+            turn_blocks = TurnBlockCollector()
+
+            stream = await agent.astream_events(
+                invoke_input,
+                config=config,
+                version="v3",
+            )
+            outbound: asyncio.Queue[dict[str, Any] | None] = asyncio.Queue()
+
+            async with stream:
+
+                async def emit_tool_calls() -> None:
+                    async for tool_call in stream.tool_calls:
+                        if tool_call.tool_name == "task":
+                            async for _ in tool_call.output_deltas:
+                                pass
+                            continue
+
+                        args = (
+                            tool_call.input
+                            if isinstance(tool_call.input, dict)
+                            else self._tool_input_dict(tool_call.input)
+                        )
+                        call_id = tool_call.tool_call_id
+                        started_at = int(time.time() * 1000)
+
+                        await outbound.put({
+                            "type": "tool_call_start",
+                            "id": call_id,
+                            "tool_name": tool_call.tool_name,
+                            "args": args,
+                            "started_at": started_at,
+                        })
+
+                        async for delta in tool_call.output_deltas:
+                            if (
+                                isinstance(delta, dict)
+                                and delta.get("type") == "screenshot"
+                            ):
+                                await outbound.put({
+                                    "type": "browser_preview",
+                                    "tool_call_id": call_id,
+                                    "url": str(delta.get("url") or ""),
+                                    "image_base64": str(delta.get("image_base64") or ""),
+                                })
+
+                        completed_at = int(time.time() * 1000)
+                        if tool_call.error:
+                            await outbound.put({
+                                "type": "tool_call_end",
+                                "id": call_id,
+                                "tool_name": tool_call.tool_name,
+                                "result": tool_call.error,
+                                "status": "error",
+                                "completed_at": completed_at,
+                            })
+                        else:
+                            await outbound.put({
+                                "type": "tool_call_end",
+                                "id": call_id,
+                                "tool_name": tool_call.tool_name,
+                                "result": self._tool_output_text(tool_call.output),
+                                "status": "complete",
+                                "completed_at": completed_at,
+                            })
+
+                async def emit_messages() -> None:
+                    async for message in stream.messages:
+                        async for token in message.text:
+                            if token:
+                                await outbound.put({"type": "token", "content": token})
+
+                async def emit_subagents() -> None:
+                    async for subagent in stream.subagents:
+                        sa_id = subagent.trigger_call_id or str(uuid4())
+                        started_at = int(time.time() * 1000)
+                        await outbound.put({
+                            "type": "subagent_start",
+                            "id": sa_id,
+                            "subagent_type": subagent.name or "agent",
+                            "description": "",
+                            "started_at": started_at,
+                        })
+
+                        content_parts: list[str] = []
+                        async for message in subagent.messages:
+                            async for token in message.text:
+                                if not token:
+                                    continue
+                                content_parts.append(token)
+                                await outbound.put({
+                                    "type": "subagent_token",
+                                    "id": sa_id,
+                                    "content": token,
+                                })
+
+                        result = "".join(content_parts)
+                        status = "complete"
+                        try:
+                            output = await subagent.output
+                            if not result.strip() and output is not None:
+                                result = self._tool_output_text(output)
+                        except Exception:
+                            status = "error"
+                            if not result:
+                                result = "Subagent failed"
+
+                        await outbound.put({
+                            "type": "subagent_done",
+                            "id": sa_id,
+                            "result": result,
+                            "status": status,
+                            "completed_at": int(time.time() * 1000),
+                        })
+
+                async def run_projections() -> bool:
+                    hit_recursion_limit = False
+                    try:
+                        results = await asyncio.gather(
+                            emit_tool_calls(),
+                            emit_messages(),
+                            emit_subagents(),
+                            return_exceptions=True,
+                        )
+                        for result in results:
+                            if isinstance(result, GraphRecursionError):
+                                hit_recursion_limit = True
+                                logger.warning("stream_reply_recursion_limit thread_id=%s", thread_id)
+                            elif isinstance(result, Exception):
+                                raise result
+                    finally:
+                        await outbound.put(None)
+                    return hit_recursion_limit
+
+                projections = asyncio.create_task(run_projections())
+                try:
+                    while True:
+                        event = await outbound.get()
+                        if event is None:
+                            break
+                        if event.get("type") == "token":
+                            content = event.get("content", "")
+                            if content:
+                                full_text_parts.append(content)
+                                token_chunks += 1
+                        turn_blocks.observe(event)
+                        yield event
+                finally:
+                    recursed = await projections
+
+            pending_after = self._pending_tool_calls(agent, config)
+            if pending_after:
+                yield {
+                    "type": "interrupt",
+                    "pending_tool_calls": [
+                        {
+                            "tool_name": p.tool_name,
+                            "args": p.args,
+                            "description": p.description,
+                        }
+                        for p in pending_after
+                    ],
+                }
+
+            full_text = "".join(full_text_parts).strip()
+            if not full_text and not pending_after:
+                full_text = self._assistant_text_from_graph_state(
+                    agent,
+                    config,
+                    min_message_index=initial_message_count,
                 )
 
-        if full_text and token_chunks == 0 and not pending_after:
-            chunk_size = 32
-            for i in range(0, len(full_text), chunk_size):
-                yield {"type": "token", "content": full_text[i : i + chunk_size]}
-                await asyncio.sleep(0.02)
+            if not full_text and not pending_after:
+                if recursed:
+                    full_text = (
+                        "The agent stopped after reaching the maximum step limit "
+                        f"({self._recursion_limit()}). Please simplify your request or try again."
+                    )
+                else:
+                    full_text = (
+                        "I completed the request but couldn't produce a visible reply. "
+                        "Please try again."
+                    )
 
-        block_specs = [
-            {"block_type": block_type.value, "payload": payload}
-            for block_type, payload in turn_blocks.to_block_specs(full_text)
-        ]
+            if full_text and token_chunks == 0 and not pending_after:
+                chunk_size = 32
+                for i in range(0, len(full_text), chunk_size):
+                    yield {"type": "token", "content": full_text[i : i + chunk_size]}
+                    await asyncio.sleep(0.02)
 
-        yield {
-            "type": "done",
-            "full_text": full_text,
-            "interrupted": bool(pending_after),
-            "block_specs": block_specs,
-        }
+            block_specs = [
+                {"block_type": block_type.value, "payload": payload}
+                for block_type, payload in turn_blocks.to_block_specs(full_text)
+            ]
+
+            if langfuse_handler is not None:
+                record_trace_io(user_input=user_text, assistant_output=full_text)
+
+            yield {
+                "type": "done",
+                "full_text": full_text,
+                "interrupted": bool(pending_after),
+                "block_specs": block_specs,
+            }
 
 
 agent_service = AgentService()

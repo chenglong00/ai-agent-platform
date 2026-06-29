@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, authorizedFetch, parseApiErrorMessage } from "./api";
 
 const kbBase = `${apiBaseUrl}/api/v1/knowledge-base`;
 
@@ -142,21 +142,14 @@ export type DeleteDocumentResult = {
   deleted: boolean;
 };
 
-function authHeaders(accessToken: string, json = true): HeadersInit {
-  const headers: Record<string, string> = {
-    Authorization: `Bearer ${accessToken.trim()}`,
-  };
-  if (json) headers["Content-Type"] = "application/json";
-  return headers;
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json" };
 }
 
 export async function fetchKnowledgeBaseOptions(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<KnowledgeBaseOptions> {
-  const res = await fetch(`${kbBase}/options`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(`${kbBase}/options`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<KnowledgeBaseOptions>;
 }
@@ -169,33 +162,27 @@ export type DocumentDetail = DocumentSummary & {
 };
 
 export async function fetchKnowledgeBaseDocument(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
 ): Promise<DocumentDetail> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}`,
-    {
-      headers: authHeaders(accessToken, false),
-      cache: "no-store",
-    },
+    { method: "GET" },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<DocumentDetail>;
 }
 
 export async function fetchKnowledgeBaseDocuments(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<DocumentSummary[]> {
-  const res = await fetch(`${kbBase}/documents`, {
-    headers: authHeaders(accessToken, false),
-    cache: "no-store",
-  });
+  const res = await authorizedFetch(`${kbBase}/documents`, { method: "GET" });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<DocumentSummary[]>;
 }
 
 export async function uploadKnowledgeBaseDocument(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   file: File,
   settings?: DocumentSettingsRequest,
   parsingStrategy: ParsingStrategyId = "pypdf",
@@ -206,28 +193,25 @@ export async function uploadKnowledgeBaseDocument(
   if (settings) {
     form.append("settings", JSON.stringify(settings));
   }
-  const res = await fetch(`${kbBase}/documents/upload`, {
+  const res = await authorizedFetch(`${kbBase}/documents/upload`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${accessToken.trim()}` },
     body: form,
-    cache: "no-store",
   });
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<DocumentUploadResult>;
 }
 
 export async function updateKnowledgeBaseDocumentSettings(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
   body: DocumentSettingsRequest,
 ): Promise<DocumentDetail> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}`,
     {
       method: "PATCH",
-      headers: authHeaders(accessToken),
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
-      cache: "no-store",
     },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
@@ -235,22 +219,19 @@ export async function updateKnowledgeBaseDocumentSettings(
 }
 
 export async function fetchKnowledgeBaseDocumentFile(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
 ): Promise<Blob> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}/file`,
-    {
-      headers: { Authorization: `Bearer ${accessToken.trim()}` },
-      cache: "no-store",
-    },
+    { method: "GET" },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.blob();
 }
 
 export async function previewKnowledgeBaseChunks(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
   body: {
     chunking_strategy: ChunkingStrategyId;
@@ -258,13 +239,12 @@ export async function previewKnowledgeBaseChunks(
     chunk_overlap: number;
   },
 ): Promise<PreviewChunksResult> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}/preview-chunks`,
     {
       method: "POST",
-      headers: authHeaders(accessToken),
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
-      cache: "no-store",
     },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
@@ -272,24 +252,21 @@ export async function previewKnowledgeBaseChunks(
 }
 
 export async function fetchKnowledgeBaseStoredChunks(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
   limit = 12,
 ): Promise<PreviewChunksResult> {
   const params = new URLSearchParams({ limit: String(limit) });
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}/chunks?${params}`,
-    {
-      headers: authHeaders(accessToken, false),
-      cache: "no-store",
-    },
+    { method: "GET" },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<PreviewChunksResult>;
 }
 
 export async function ingestKnowledgeBaseDocument(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
   body: {
     chunking_strategy: ChunkingStrategyId;
@@ -298,13 +275,12 @@ export async function ingestKnowledgeBaseDocument(
     embedding_model: EmbeddingModelId;
   },
 ): Promise<IngestResult> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}/ingest`,
     {
       method: "POST",
-      headers: authHeaders(accessToken),
+      headers: jsonHeaders(),
       body: JSON.stringify(body),
-      cache: "no-store",
     },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
@@ -312,16 +288,12 @@ export async function ingestKnowledgeBaseDocument(
 }
 
 export async function deleteKnowledgeBaseDocument(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   documentId: string,
 ): Promise<DeleteDocumentResult> {
-  const res = await fetch(
+  const res = await authorizedFetch(
     `${kbBase}/documents/${encodeURIComponent(documentId)}`,
-    {
-      method: "DELETE",
-      headers: authHeaders(accessToken, false),
-      cache: "no-store",
-    },
+    { method: "DELETE" },
   );
   if (!res.ok) throw new Error(await parseApiErrorMessage(res));
   return res.json() as Promise<DeleteDocumentResult>;

@@ -1,4 +1,4 @@
-import { apiBaseUrl, parseApiErrorMessage } from "./api";
+import { apiBaseUrl, authorizedFetch, parseApiErrorMessage } from "./api";
 
 const connectorBase = `${apiBaseUrl}/api/v1/connectors`;
 
@@ -34,19 +34,14 @@ export type ConnectorToolInfo = {
   description: string | null;
 };
 
-function authHeaders(accessToken: string): HeadersInit {
-  return {
-    Authorization: `Bearer ${accessToken.trim()}`,
-    "Content-Type": "application/json",
-  };
+function jsonHeaders(): HeadersInit {
+  return { "Content-Type": "application/json" };
 }
 
 export async function fetchConnectors(
-  accessToken: string,
+  _accessToken?: string | null,
 ): Promise<ConnectorStatusItem[]> {
-  const res = await fetch(connectorBase, {
-    headers: authHeaders(accessToken),
-  });
+  const res = await authorizedFetch(connectorBase, { method: "GET" });
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
   }
@@ -54,12 +49,12 @@ export async function fetchConnectors(
 }
 
 export async function beginConnectorOAuth(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   connectorId: string,
 ): Promise<string> {
-  const res = await fetch(`${connectorBase}/${connectorId}/authorize`, {
+  const res = await authorizedFetch(`${connectorBase}/${connectorId}/authorize`, {
     method: "POST",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
   });
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
@@ -69,13 +64,13 @@ export async function beginConnectorOAuth(
 }
 
 export async function updateConnectorEnabled(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   connectorId: string,
   enabled: boolean,
 ): Promise<UserConnectorSummary> {
-  const res = await fetch(`${connectorBase}/${connectorId}`, {
+  const res = await authorizedFetch(`${connectorBase}/${connectorId}`, {
     method: "PATCH",
-    headers: authHeaders(accessToken),
+    headers: jsonHeaders(),
     body: JSON.stringify({ enabled }),
   });
   if (!res.ok) {
@@ -85,12 +80,11 @@ export async function updateConnectorEnabled(
 }
 
 export async function disconnectConnector(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   connectorId: string,
 ): Promise<void> {
-  const res = await fetch(`${connectorBase}/${connectorId}`, {
+  const res = await authorizedFetch(`${connectorBase}/${connectorId}`, {
     method: "DELETE",
-    headers: authHeaders(accessToken),
   });
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
@@ -98,11 +92,11 @@ export async function disconnectConnector(
 }
 
 export async function fetchConnectorTools(
-  accessToken: string,
+  _accessToken: string | null | undefined,
   connectorId: string,
 ): Promise<ConnectorToolInfo[]> {
-  const res = await fetch(`${connectorBase}/${connectorId}/tools`, {
-    headers: authHeaders(accessToken),
+  const res = await authorizedFetch(`${connectorBase}/${connectorId}/tools`, {
+    method: "GET",
   });
   if (!res.ok) {
     throw new Error(await parseApiErrorMessage(res));
