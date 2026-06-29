@@ -41,7 +41,7 @@ class RemoteMcpClient:
     async def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         await self._ensure_initialized()
         clean_name = name.strip()
-        clean_args = _normalize_google_arguments(arguments or {})
+        clean_args = _normalize_google_arguments(arguments or {}, tool_name=clean_name)
         payload = await self._request(
             "tools/call",
             {"name": clean_name, "arguments": clean_args},
@@ -109,13 +109,39 @@ class RemoteMcpClient:
         return _parse_mcp_response(resp)
 
 
-def _normalize_google_arguments(arguments: dict[str, Any]) -> dict[str, Any]:
-    """Google MCP tools expect camelCase argument names (startTime, pageSize, ...)."""
+# REST API / LLM aliases → official Google MCP tool argument names.
+_ARGUMENT_ALIASES: dict[str, str] = {
+    "timemin": "startTime",
+    "timemax": "endTime",
+    "starttime": "startTime",
+    "endtime": "endTime",
+    "maxresults": "pageSize",
+    "pagesize": "pageSize",
+    "pagetoken": "pageToken",
+    "calendarid": "calendarId",
+    "timezone": "timeZone",
+    "orderby": "orderBy",
+    "fulltext": "fullText",
+    "eventtypefilter": "eventTypeFilter",
+    "q": "fullText",
+    "query": "fullText",
+}
+
+
+def _normalize_google_arguments(
+    arguments: dict[str, Any],
+    *,
+    tool_name: str | None = None,
+) -> dict[str, Any]:
+    """Normalize LLM/REST aliases to Google MCP camelCase tool arguments."""
+    del tool_name  # reserved for future tool-specific maps
     normalized: dict[str, Any] = {}
     for key, value in arguments.items():
         if not isinstance(key, str):
             raise McpClientError("Tool arguments must use string keys.")
-        normalized[_to_camel_case(key) if "_" in key else key] = value
+        camel = _to_camel_case(key) if "_" in key else key
+        canonical = _ARGUMENT_ALIASES.get(camel.lower(), camel)
+        normalized[canonical] = value
     return normalized
 
 

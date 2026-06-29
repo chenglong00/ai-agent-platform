@@ -55,7 +55,8 @@ Use search_user_memories or list_user_memories when you need to recall what you 
 
 _SYSTEM_PROMPT_CONNECTORS = """
 When the user asks about Google Calendar, Drive, or Gmail, use list_connected_connectors first.
-If connected, call call_connector_mcp_tool with the connector_id, official MCP tool name, and JSON arguments.
+If connected, call call_connector_mcp_tool with connector_id, MCP tool name, and JSON arguments.
+Google Calendar list_events uses startTime/endTime/pageSize (not timeMin/timeMax from the REST API).
 Review MCP results before answering; never invent calendar events or file contents."""
 
 

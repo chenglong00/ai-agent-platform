@@ -83,8 +83,11 @@ async def call_connector_mcp_tool(
     """Call a tool on an official Google Workspace MCP server for the current user.
 
     connector_id: google_calendar | google_drive | google_gmail
-    tool_name: MCP tool name from that server (e.g. list_events, search_files)
-    arguments_json: JSON object string of tool arguments, e.g. {}
+    tool_name: MCP tool name (e.g. list_events, search_files)
+    arguments_json: JSON object string. Use MCP names, not REST API names.
+      Calendar list_events example:
+      {"startTime":"2026-06-29T00:00:00Z","endTime":"2026-06-30T00:00:00Z","pageSize":10}
+      Do NOT use timeMin/timeMax (those are Calendar REST names, not MCP).
     """
     if not settings.CONNECTORS_ENABLED:
         return "Connectors are disabled."
@@ -117,7 +120,20 @@ async def call_connector_mcp_tool(
             tool_name,
             exc,
         )
-        return f"MCP tool error: {exc}"
+        return f"MCP tool error: {exc}{_mcp_error_hint(str(exc))}"
     except Exception as exc:
         logger.exception("call_connector_mcp_tool_failed connector=%s tool=%s", connector_id, tool_name)
         return f"MCP tool call failed: {exc}"
+
+
+def _mcp_error_hint(message: str) -> str:
+    lower = message.lower()
+    if "does not have permission" in lower:
+        return (
+            " Hint: reconnect the connector on /connector, ensure GCP project has "
+            "calendarmcp.googleapis.com enabled and roles/mcp.toolUser, and that the "
+            "project is enrolled in the Google Workspace MCP Developer Preview."
+        )
+    if "timemin" in lower or "timemax" in lower or "unknown name" in lower:
+        return " Hint: use startTime/endTime (MCP names), not timeMin/timeMax."
+    return ""
